@@ -968,7 +968,7 @@ impl LiveScanner {
 
         let mut scored: Vec<ModelCandidate> = Vec::new();
         for ((market, current_price, history, features), pred) in
-            market_data.into_iter().zip(predictions.into_iter())
+            market_data.into_iter().zip(predictions)
         {
             let (ml_prob, ml_conf) = match pred {
                 Some(p) => p,
