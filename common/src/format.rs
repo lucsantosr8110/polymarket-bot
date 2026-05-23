@@ -390,6 +390,7 @@ pub struct CopyStatsData {
     pub open: usize,
     pub unrealized: f64,
     pub exposure: f64,
+    pub trader_rows: Vec<TraderRow>,
 }
 
 /// Render the copy-trading `/stats` message.
@@ -414,7 +415,7 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
         String::new()
     };
 
-    format!(
+    let mut msg = format!(
         "📊 *Copy Trading Stats*\n\n\
          👥 Traders followed: {traders}\n\
          💰 Bankroll: `€{bankroll:.2}` (started: `€{starting:.2}`)\n\
@@ -430,7 +431,35 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
         wr = wr,
         open = data.open,
         unrealized = unrealized_line,
-    )
+    );
+
+    if !data.trader_rows.is_empty() {
+        msg.push_str("\n\n━━━━━━━━━━━━━━━━━━");
+        for t in &data.trader_rows {
+            let roi_str = if t.starting_bankroll > 0.0 {
+                format!("{:+.1}%", t.pnl / t.starting_bankroll * 100.0)
+            } else {
+                "—".to_string()
+            };
+            let open_str = if t.open > 0 {
+                format!("   {} open", t.open)
+            } else {
+                String::new()
+            };
+            msg.push_str(&format!(
+                "\n👤 *{name}*   `€{bankroll:.2}`   {wins}W/{losses}L   `€{pnl:+.2}` ({roi}){open}",
+                name = t.name,
+                bankroll = t.bankroll,
+                wins = t.wins,
+                losses = t.losses,
+                pnl = t.pnl,
+                roi = roi_str,
+                open = open_str,
+            ));
+        }
+    }
+
+    msg
 }
 
 /// A single followed-trader row for `/traders`.
@@ -832,5 +861,82 @@ mod tests {
             "expected per-strategy ROI in output: {output}"
         );
         assert!(output.contains("aggressive"));
+    }
+
+    fn make_trader_row(
+        name: &str,
+        bankroll: f64,
+        starting: f64,
+        wins: usize,
+        losses: usize,
+        pnl: f64,
+        open: usize,
+    ) -> TraderRow {
+        TraderRow {
+            name: name.to_string(),
+            wallet: format!("0x{name}wallet"),
+            wallet_short: format!("0x{name}"),
+            rank: None,
+            poly_pnl: None,
+            bankroll,
+            starting_bankroll: starting,
+            wins,
+            losses,
+            pnl,
+            open,
+        }
+    }
+
+    fn make_copy_stats_data(trader_rows: Vec<TraderRow>) -> CopyStatsData {
+        CopyStatsData {
+            traders: trader_rows.len(),
+            total_bankroll: 1000.0,
+            starting_bankroll: 800.0,
+            wins: 5,
+            losses: 2,
+            pnl: 200.0,
+            open: 1,
+            unrealized: 10.0,
+            exposure: 50.0,
+            trader_rows,
+        }
+    }
+
+    #[test]
+    fn test_format_copy_stats_no_trader_rows_no_separator() {
+        let data = make_copy_stats_data(vec![]);
+        let output = format_copy_stats(&data);
+        assert!(
+            !output.contains("━"),
+            "separator should not appear with no trader rows"
+        );
+        assert!(output.contains("No traders followed yet."));
+    }
+
+    #[test]
+    fn test_format_copy_stats_trader_rows_appear() {
+        let rows = vec![
+            make_trader_row("alice", 520.0, 400.0, 9, 3, 85.2, 2),
+            make_trader_row("bob", 430.0, 350.0, 6, 2, 95.1, 1),
+        ];
+        let data = make_copy_stats_data(rows);
+        let output = format_copy_stats(&data);
+        assert!(output.contains("━"), "separator must appear");
+        assert!(output.contains("alice"), "alice row must appear");
+        assert!(output.contains("bob"), "bob row must appear");
+        assert!(output.contains("9W/3L"), "alice record must appear");
+        assert!(output.contains("6W/2L"), "bob record must appear");
+    }
+
+    #[test]
+    fn test_format_copy_stats_trader_roi_zero_starting() {
+        let rows = vec![make_trader_row("ghost", 300.0, 0.0, 2, 1, 50.0, 0)];
+        let data = make_copy_stats_data(rows);
+        let output = format_copy_stats(&data);
+        // ROI should show "—" when starting_bankroll is 0
+        assert!(
+            output.contains("—"),
+            "ROI must be '—' when starting_bankroll is 0"
+        );
     }
 }

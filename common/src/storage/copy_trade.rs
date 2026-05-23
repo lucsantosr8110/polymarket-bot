@@ -209,6 +209,7 @@ impl PgPortfolio {
             open: open_count,
             unrealized,
             exposure,
+            trader_rows: vec![], // populated in Task 4 via collect_trader_rows
         };
 
         Ok(crate::format::format_copy_stats(&data))
