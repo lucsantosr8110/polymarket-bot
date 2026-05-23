@@ -165,28 +165,47 @@ impl PgPortfolio {
         Ok((wins, losses, pnl))
     }
 
-    /// Build aggregate copy-trading stats for the /stats command.
-    pub async fn stats_summary_copy(&self) -> Result<String> {
+    /// Fetch per-trader stats rows for all active traders.
+    async fn collect_trader_rows(&self) -> Result<Vec<crate::format::TraderRow>> {
         let traders = self.get_active_traders().await?;
-        let open_bets = self.open_bets().await?;
-
-        let mut total_bankroll = 0.0_f64;
-        let mut total_starting = 0.0_f64;
-        let mut total_wins = 0_usize;
-        let mut total_losses = 0_usize;
-        let mut total_pnl = 0.0_f64;
-
+        let open_bets = self.open_bets().await.unwrap_or_default();
+        let mut rows = Vec::with_capacity(traders.len());
         for t in &traders {
             let short = &t.proxy_wallet[..8.min(t.proxy_wallet.len())];
+            let name = t.username.as_deref().unwrap_or(short).to_string();
             let strat = format!("copy:{short}");
-            total_bankroll += self.strategy_bankroll(&strat).await.unwrap_or(0.0);
-            total_starting += self.strategy_starting_bankroll(&strat).await.unwrap_or(0.0);
-            let (w, l, p) = self.copy_trader_record(&strat).await.unwrap_or((0, 0, 0.0));
-            total_wins += w;
-            total_losses += l;
-            total_pnl += p;
+            let bankroll = self.strategy_bankroll(&strat).await.unwrap_or(0.0);
+            let starting_bankroll = self.strategy_starting_bankroll(&strat).await.unwrap_or(0.0);
+            let (wins, losses, pnl) = self.copy_trader_record(&strat).await.unwrap_or((0, 0, 0.0));
+            let open_count = open_bets.iter().filter(|b| b.strategy == strat).count();
+            rows.push(crate::format::TraderRow {
+                name,
+                wallet: t.proxy_wallet.clone(),
+                wallet_short: short.to_string(),
+                rank: t.rank,
+                poly_pnl: t.pnl,
+                bankroll,
+                starting_bankroll,
+                wins,
+                losses,
+                pnl,
+                open: open_count,
+            });
         }
+        Ok(rows)
+    }
 
+    /// Build aggregate copy-trading stats for the /stats command.
+    pub async fn stats_summary_copy(&self) -> Result<String> {
+        let trader_rows = self.collect_trader_rows().await?;
+
+        let total_bankroll: f64 = trader_rows.iter().map(|r| r.bankroll).sum();
+        let total_starting: f64 = trader_rows.iter().map(|r| r.starting_bankroll).sum();
+        let total_wins: usize = trader_rows.iter().map(|r| r.wins).sum();
+        let total_losses: usize = trader_rows.iter().map(|r| r.losses).sum();
+        let total_pnl: f64 = trader_rows.iter().map(|r| r.pnl).sum();
+
+        let open_bets = self.open_bets().await?;
         let open_count = open_bets
             .iter()
             .filter(|b| b.strategy.starts_with("copy:"))
@@ -200,7 +219,7 @@ impl PgPortfolio {
         };
 
         let data = crate::format::CopyStatsData {
-            traders: traders.len(),
+            traders: trader_rows.len(),
             total_bankroll,
             starting_bankroll: total_starting,
             wins: total_wins,
@@ -209,7 +228,7 @@ impl PgPortfolio {
             open: open_count,
             unrealized,
             exposure,
-            trader_rows: vec![], // populated in Task 4 via collect_trader_rows
+            trader_rows,
         };
 
         Ok(crate::format::format_copy_stats(&data))
@@ -217,38 +236,7 @@ impl PgPortfolio {
 
     /// Build a summary of followed traders for the /traders command.
     pub async fn traders_summary(&self) -> Result<String> {
-        let traders = self.get_active_traders().await?;
-
-        let mut rows = Vec::with_capacity(traders.len());
-        for t in &traders {
-            let short = &t.proxy_wallet[..8.min(t.proxy_wallet.len())];
-            let name = t.username.as_deref().unwrap_or(short).to_string();
-            let strat = format!("copy:{short}");
-            let bankroll = self.strategy_bankroll(&strat).await.unwrap_or(0.0);
-            let (wins, losses, pnl) = self.copy_trader_record(&strat).await.unwrap_or((0, 0, 0.0));
-            let open_count = self
-                .open_bets()
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|b| b.strategy == strat)
-                .count();
-
-            rows.push(crate::format::TraderRow {
-                name,
-                wallet: t.proxy_wallet.clone(),
-                wallet_short: short.to_string(),
-                rank: t.rank,
-                poly_pnl: t.pnl,
-                bankroll,
-                starting_bankroll: 0.0,
-                wins,
-                losses,
-                pnl,
-                open: open_count,
-            });
-        }
-
+        let rows = self.collect_trader_rows().await?;
         Ok(crate::format::format_traders(&rows))
     }
 }
