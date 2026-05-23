@@ -400,10 +400,10 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
     }
 
     let wr = win_rate(data.wins, data.losses);
-    let roi = if data.starting_bankroll > 0.0 {
-        data.pnl / data.starting_bankroll * 100.0
+    let roi_str = if data.starting_bankroll > 0.0 {
+        format!("`{:+.1}%`", data.pnl / data.starting_bankroll * 100.0)
     } else {
-        0.0
+        "—".to_string()
     };
 
     let unrealized_line = if data.open > 0 {
@@ -419,13 +419,13 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
         "📊 *Copy Trading Stats*\n\n\
          👥 Traders followed: {traders}\n\
          💰 Bankroll: `€{bankroll:.2}` (started: `€{starting:.2}`)\n\
-         💵 PnL: `€{pnl:+.2}` (ROI `{roi:+.1}%`)\n\
+         💵 PnL: `€{pnl:+.2}` (ROI {roi})\n\
          📋 Record: {wins}W/{losses}L ({wr:.0}%) | {open} open{unrealized}",
         traders = data.traders,
         bankroll = data.total_bankroll,
         starting = data.starting_bankroll,
         pnl = data.pnl,
-        roi = roi,
+        roi = roi_str,
         wins = data.wins,
         losses = data.losses,
         wr = wr,
@@ -904,13 +904,28 @@ mod tests {
 
     #[test]
     fn test_format_copy_stats_no_trader_rows_no_separator() {
-        let data = make_copy_stats_data(vec![]);
+        // traders > 0 but trader_rows empty — aggregate renders, no separator
+        let data = CopyStatsData {
+            traders: 2,
+            total_bankroll: 1000.0,
+            starting_bankroll: 800.0,
+            wins: 5,
+            losses: 2,
+            pnl: 200.0,
+            open: 0,
+            unrealized: 0.0,
+            exposure: 0.0,
+            trader_rows: vec![],
+        };
         let output = format_copy_stats(&data);
         assert!(
             !output.contains("━"),
             "separator should not appear with no trader rows"
         );
-        assert!(output.contains("No traders followed yet."));
+        assert!(
+            output.contains("Traders followed: 2"),
+            "aggregate header must appear"
+        );
     }
 
     #[test]
