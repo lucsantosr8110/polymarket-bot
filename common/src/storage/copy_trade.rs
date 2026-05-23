@@ -240,6 +240,7 @@ impl PgPortfolio {
                 rank: t.rank,
                 poly_pnl: t.pnl,
                 bankroll,
+                starting_bankroll: 0.0,
                 wins,
                 losses,
                 pnl,

@@ -441,6 +441,7 @@ pub struct TraderRow {
     pub rank: Option<i32>,
     pub poly_pnl: Option<f64>,
     pub bankroll: f64,
+    pub starting_bankroll: f64,
     pub wins: usize,
     pub losses: usize,
     pub pnl: f64,
@@ -535,6 +536,24 @@ pub fn format_copy_bet(n: &CopyBetNotif) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn test_trader_row_has_starting_bankroll() {
+        let row = TraderRow {
+            name: "alice".to_string(),
+            wallet: "0xabc".to_string(),
+            wallet_short: "0xabc123".to_string(),
+            rank: None,
+            poly_pnl: None,
+            bankroll: 500.0,
+            starting_bankroll: 400.0,
+            wins: 3,
+            losses: 1,
+            pnl: 100.0,
+            open: 2,
+        };
+        assert!((row.starting_bankroll - 400.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_win_rate_zero() {
