@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 
+use super::portfolio::Bet;
 use super::postgres::{FollowedTrader, FollowedTraderRow, NewCopyTradeEvent, PgPortfolio};
 
 impl PgPortfolio {
@@ -166,9 +167,12 @@ impl PgPortfolio {
     }
 
     /// Fetch per-trader stats rows for all active traders.
-    async fn collect_trader_rows(&self) -> Result<Vec<crate::format::TraderRow>> {
+    ///
+    /// Returns the rendered rows alongside the raw open bets so callers can
+    /// reuse the already-fetched data without a second DB round-trip.
+    async fn collect_trader_rows(&self) -> Result<(Vec<crate::format::TraderRow>, Vec<Bet>)> {
         let traders = self.get_active_traders().await?;
-        let open_bets = self.open_bets().await.unwrap_or_default();
+        let open_bets = self.open_bets().await?;
         let mut rows = Vec::with_capacity(traders.len());
         for t in &traders {
             let short = &t.proxy_wallet[..8.min(t.proxy_wallet.len())];
@@ -192,12 +196,12 @@ impl PgPortfolio {
                 open: open_count,
             });
         }
-        Ok(rows)
+        Ok((rows, open_bets))
     }
 
     /// Build aggregate copy-trading stats for the /stats command.
     pub async fn stats_summary_copy(&self) -> Result<String> {
-        let trader_rows = self.collect_trader_rows().await?;
+        let (trader_rows, open_bets) = self.collect_trader_rows().await?;
 
         let total_bankroll: f64 = trader_rows.iter().map(|r| r.bankroll).sum();
         let total_starting: f64 = trader_rows.iter().map(|r| r.starting_bankroll).sum();
@@ -205,7 +209,6 @@ impl PgPortfolio {
         let total_losses: usize = trader_rows.iter().map(|r| r.losses).sum();
         let total_pnl: f64 = trader_rows.iter().map(|r| r.pnl).sum();
 
-        let open_bets = self.open_bets().await?;
         let open_count = open_bets
             .iter()
             .filter(|b| b.strategy.starts_with("copy:"))
@@ -236,7 +239,7 @@ impl PgPortfolio {
 
     /// Build a summary of followed traders for the /traders command.
     pub async fn traders_summary(&self) -> Result<String> {
-        let rows = self.collect_trader_rows().await?;
+        let (rows, _) = self.collect_trader_rows().await?;
         Ok(crate::format::format_traders(&rows))
     }
 }

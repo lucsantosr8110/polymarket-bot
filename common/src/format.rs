@@ -437,7 +437,7 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
         msg.push_str("\n\n━━━━━━━━━━━━━━━━━━");
         for t in &data.trader_rows {
             let roi_str = if t.starting_bankroll > 0.0 {
-                format!("{:+.1}%", t.pnl / t.starting_bankroll * 100.0)
+                format!("`{:+.1}%`", t.pnl / t.starting_bankroll * 100.0)
             } else {
                 "—".to_string()
             };
