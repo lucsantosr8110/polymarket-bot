@@ -174,7 +174,9 @@ impl PgPortfolio {
     /// so callers can reuse the already-fetched data without a second DB round-trip.
     async fn collect_trader_rows(&self) -> Result<(Vec<crate::format::TraderRow>, Vec<Bet>)> {
         let traders = self.get_active_traders().await?;
-        let open_bets = self.open_bets().await?;
+        // Best-effort: open-bet fetch failures show 0 open bets rather than
+        // failing the whole command (matches pre-refactor `/traders` behaviour).
+        let open_bets = self.open_bets().await.unwrap_or_default();
         // Precompute open-bet counts per strategy in one pass (O(open_bets)).
         let open_by_strat: HashMap<&str, usize> =
             open_bets.iter().fold(HashMap::new(), |mut acc, b| {
