@@ -2,6 +2,19 @@
 
 use crate::storage::portfolio::{Bet, BetSide};
 
+/// Escape Telegram legacy-Markdown special characters in user-supplied strings.
+///
+/// Prevents names from external APIs from breaking `parse_mode=Markdown` messages.
+pub fn escape_markdown(s: &str) -> String {
+    // Escape `\` first so subsequent replacements don't double-escape.
+    s.replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('`', "\\`")
+}
+
 /// Get emoji label for a strategy name.
 pub fn strategy_label(name: &str) -> &'static str {
     match name {
@@ -390,6 +403,7 @@ pub struct CopyStatsData {
     pub open: usize,
     pub unrealized: f64,
     pub exposure: f64,
+    pub trader_rows: Vec<TraderRow>,
 }
 
 /// Render the copy-trading `/stats` message.
@@ -399,10 +413,10 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
     }
 
     let wr = win_rate(data.wins, data.losses);
-    let roi = if data.starting_bankroll > 0.0 {
-        data.pnl / data.starting_bankroll * 100.0
+    let roi_str = if data.starting_bankroll > 0.0 {
+        format!("`{:+.1}%`", data.pnl / data.starting_bankroll * 100.0)
     } else {
-        0.0
+        "—".to_string()
     };
 
     let unrealized_line = if data.open > 0 {
@@ -414,23 +428,52 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
         String::new()
     };
 
-    format!(
+    let mut msg = format!(
         "📊 *Copy Trading Stats*\n\n\
          👥 Traders followed: {traders}\n\
          💰 Bankroll: `€{bankroll:.2}` (started: `€{starting:.2}`)\n\
-         💵 PnL: `€{pnl:+.2}` (ROI `{roi:+.1}%`)\n\
+         💵 PnL: `€{pnl:+.2}` (ROI {roi})\n\
          📋 Record: {wins}W/{losses}L ({wr:.0}%) | {open} open{unrealized}",
         traders = data.traders,
         bankroll = data.total_bankroll,
         starting = data.starting_bankroll,
         pnl = data.pnl,
-        roi = roi,
+        roi = roi_str,
         wins = data.wins,
         losses = data.losses,
         wr = wr,
         open = data.open,
         unrealized = unrealized_line,
-    )
+    );
+
+    if !data.trader_rows.is_empty() {
+        msg.push_str("\n\n━━━━━━━━━━━━━━━━━━");
+        for t in &data.trader_rows {
+            let roi_str = if t.starting_bankroll > 0.0 {
+                format!("`{:+.1}%`", t.pnl / t.starting_bankroll * 100.0)
+            } else {
+                "—".to_string()
+            };
+            let open_str = if t.open > 0 {
+                format!("   {} open", t.open)
+            } else {
+                String::new()
+            };
+            let safe_name = escape_markdown(&t.name);
+            msg.push_str(&format!(
+                "\n👤 *{name}*   `€{bankroll:.2}`   {wins}W/{losses}L   `€{pnl:+.2}` ({roi}){open}",
+                name = safe_name,
+                bankroll = t.bankroll,
+                wins = t.wins,
+                losses = t.losses,
+                pnl = t.pnl,
+                roi = roi_str,
+                open = open_str,
+            ));
+        }
+    }
+
+    msg
 }
 
 /// A single followed-trader row for `/traders`.
@@ -441,6 +484,7 @@ pub struct TraderRow {
     pub rank: Option<i32>,
     pub poly_pnl: Option<f64>,
     pub bankroll: f64,
+    pub starting_bankroll: f64,
     pub wins: usize,
     pub losses: usize,
     pub pnl: f64,
@@ -470,7 +514,7 @@ pub fn format_traders(traders: &[TraderRow]) -> String {
              \u{00a0}\u{00a0}💰 Bankroll: `€{bankroll:.2}`\n\
              \u{00a0}\u{00a0}📊 Record: {wins}W/{losses}L ({pnl:+.2}€)\n\
              \u{00a0}\u{00a0}🔓 Open: {open}",
-            name = t.name,
+            name = escape_markdown(&t.name),
             wallet = t.wallet,
             bankroll = t.bankroll,
             wins = t.wins,
@@ -535,6 +579,24 @@ pub fn format_copy_bet(n: &CopyBetNotif) -> String {
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn test_trader_row_has_starting_bankroll() {
+        let row = TraderRow {
+            name: "alice".to_string(),
+            wallet: "0xabc".to_string(),
+            wallet_short: "0xabc123".to_string(),
+            rank: None,
+            poly_pnl: None,
+            bankroll: 500.0,
+            starting_bankroll: 400.0,
+            wins: 3,
+            losses: 1,
+            pnl: 100.0,
+            open: 2,
+        };
+        assert!((row.starting_bankroll - 400.0).abs() < 0.001);
+    }
 
     #[test]
     fn test_win_rate_zero() {
@@ -813,5 +875,97 @@ mod tests {
             "expected per-strategy ROI in output: {output}"
         );
         assert!(output.contains("aggressive"));
+    }
+
+    fn make_trader_row(
+        name: &str,
+        bankroll: f64,
+        starting: f64,
+        wins: usize,
+        losses: usize,
+        pnl: f64,
+        open: usize,
+    ) -> TraderRow {
+        TraderRow {
+            name: name.to_string(),
+            wallet: format!("0x{name}wallet"),
+            wallet_short: format!("0x{name}"),
+            rank: None,
+            poly_pnl: None,
+            bankroll,
+            starting_bankroll: starting,
+            wins,
+            losses,
+            pnl,
+            open,
+        }
+    }
+
+    fn make_copy_stats_data(trader_rows: Vec<TraderRow>) -> CopyStatsData {
+        CopyStatsData {
+            traders: trader_rows.len(),
+            total_bankroll: 1000.0,
+            starting_bankroll: 800.0,
+            wins: 5,
+            losses: 2,
+            pnl: 200.0,
+            open: 1,
+            unrealized: 10.0,
+            exposure: 50.0,
+            trader_rows,
+        }
+    }
+
+    #[test]
+    fn test_format_copy_stats_no_trader_rows_no_separator() {
+        // traders > 0 but trader_rows empty — aggregate renders, no separator
+        let data = CopyStatsData {
+            traders: 2,
+            total_bankroll: 1000.0,
+            starting_bankroll: 800.0,
+            wins: 5,
+            losses: 2,
+            pnl: 200.0,
+            open: 0,
+            unrealized: 0.0,
+            exposure: 0.0,
+            trader_rows: vec![],
+        };
+        let output = format_copy_stats(&data);
+        assert!(
+            !output.contains("━"),
+            "separator should not appear with no trader rows"
+        );
+        assert!(
+            output.contains("Traders followed: 2"),
+            "aggregate header must appear"
+        );
+    }
+
+    #[test]
+    fn test_format_copy_stats_trader_rows_appear() {
+        let rows = vec![
+            make_trader_row("alice", 520.0, 400.0, 9, 3, 85.2, 2),
+            make_trader_row("bob", 430.0, 350.0, 6, 2, 95.1, 1),
+        ];
+        let data = make_copy_stats_data(rows);
+        let output = format_copy_stats(&data);
+        assert!(output.contains("━"), "separator must appear");
+        assert!(output.contains("alice"), "alice row must appear");
+        assert!(output.contains("bob"), "bob row must appear");
+        assert!(output.contains("9W/3L"), "alice record must appear");
+        assert!(output.contains("6W/2L"), "bob record must appear");
+    }
+
+    #[test]
+    fn test_format_copy_stats_trader_roi_zero_starting() {
+        let rows = vec![make_trader_row("ghost", 300.0, 0.0, 2, 1, 50.0, 0)];
+        let data = make_copy_stats_data(rows);
+        let output = format_copy_stats(&data);
+        // ROI should show "—" when starting_bankroll is 0
+        assert!(
+            output.contains("—"),
+            "ROI must be '—' when starting_bankroll is 0"
+        );
     }
 }

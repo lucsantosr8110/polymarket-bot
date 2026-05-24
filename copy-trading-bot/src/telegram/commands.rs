@@ -103,6 +103,15 @@ pub async fn handle_command(
                     {
                         tracing::warn!(err = %e, "Failed to init copy trader bankroll");
                     }
+                    if let Err(e) = portfolio
+                        .ensure_key(
+                            &format!("starting_bankroll:{strat_key}"),
+                            COPY_TRADER_STARTING_BANKROLL,
+                        )
+                        .await
+                    {
+                        tracing::warn!(err = %e, "Failed to init copy trader starting bankroll");
+                    }
                     let username = fetch_trader_username(http, &wallet).await;
                     let display = username.as_deref().unwrap_or(short);
                     match portfolio
