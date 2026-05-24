@@ -2,6 +2,16 @@
 
 use crate::storage::portfolio::{Bet, BetSide};
 
+/// Escape Telegram legacy-Markdown special characters in user-supplied strings.
+///
+/// Prevents names from external APIs from breaking `parse_mode=Markdown` messages.
+pub fn escape_markdown(s: &str) -> String {
+    s.replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('[', "\\[")
+        .replace('`', "\\`")
+}
+
 /// Get emoji label for a strategy name.
 pub fn strategy_label(name: &str) -> &'static str {
     match name {
@@ -446,12 +456,7 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
             } else {
                 String::new()
             };
-            let safe_name = t
-                .name
-                .replace('_', "\\_")
-                .replace('*', "\\*")
-                .replace('[', "\\[")
-                .replace('`', "\\`");
+            let safe_name = escape_markdown(&t.name);
             msg.push_str(&format!(
                 "\n👤 *{name}*   `€{bankroll:.2}`   {wins}W/{losses}L   `€{pnl:+.2}` ({roi}){open}",
                 name = safe_name,
