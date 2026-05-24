@@ -6,9 +6,12 @@ use crate::storage::portfolio::{Bet, BetSide};
 ///
 /// Prevents names from external APIs from breaking `parse_mode=Markdown` messages.
 pub fn escape_markdown(s: &str) -> String {
-    s.replace('_', "\\_")
+    // Escape `\` first so subsequent replacements don't double-escape.
+    s.replace('\\', "\\\\")
+        .replace('_', "\\_")
         .replace('*', "\\*")
         .replace('[', "\\[")
+        .replace(']', "\\]")
         .replace('`', "\\`")
 }
 
@@ -511,7 +514,7 @@ pub fn format_traders(traders: &[TraderRow]) -> String {
              \u{00a0}\u{00a0}💰 Bankroll: `€{bankroll:.2}`\n\
              \u{00a0}\u{00a0}📊 Record: {wins}W/{losses}L ({pnl:+.2}€)\n\
              \u{00a0}\u{00a0}🔓 Open: {open}",
-            name = t.name,
+            name = escape_markdown(&t.name),
             wallet = t.wallet,
             bankroll = t.bankroll,
             wins = t.wins,

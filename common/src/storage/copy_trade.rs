@@ -4,6 +4,8 @@
 //! Private postgres internals (`pool`, `FollowedTraderRow`) are exposed via
 //! `pub(super)` so this module can access them without a full visibility bump.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 
 use super::portfolio::Bet;
@@ -173,6 +175,12 @@ impl PgPortfolio {
     async fn collect_trader_rows(&self) -> Result<(Vec<crate::format::TraderRow>, Vec<Bet>)> {
         let traders = self.get_active_traders().await?;
         let open_bets = self.open_bets().await?;
+        // Precompute open-bet counts per strategy in one pass (O(open_bets)).
+        let open_by_strat: HashMap<&str, usize> =
+            open_bets.iter().fold(HashMap::new(), |mut acc, b| {
+                *acc.entry(b.strategy.as_str()).or_insert(0) += 1;
+                acc
+            });
         let mut rows = Vec::with_capacity(traders.len());
         for t in &traders {
             let short = &t.proxy_wallet[..8.min(t.proxy_wallet.len())];
@@ -181,7 +189,7 @@ impl PgPortfolio {
             let bankroll = self.strategy_bankroll(&strat).await.unwrap_or(0.0);
             let starting_bankroll = self.strategy_starting_bankroll(&strat).await.unwrap_or(0.0);
             let (wins, losses, pnl) = self.copy_trader_record(&strat).await.unwrap_or((0, 0, 0.0));
-            let open_count = open_bets.iter().filter(|b| b.strategy == strat).count();
+            let open_count = open_by_strat.get(strat.as_str()).copied().unwrap_or(0);
             rows.push(crate::format::TraderRow {
                 name,
                 wallet: t.proxy_wallet.clone(),
