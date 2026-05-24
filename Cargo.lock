@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "copy-trading-bot"
-version = "0.6.32"
+version = "0.6.33"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3468,7 +3468,7 @@ dependencies = [
 
 [[package]]
 name = "trading-bot"
-version = "0.6.32"
+version = "0.6.33"
 dependencies = [
  "anyhow",
  "chrono",
