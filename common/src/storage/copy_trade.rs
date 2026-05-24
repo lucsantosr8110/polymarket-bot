@@ -168,8 +168,8 @@ impl PgPortfolio {
 
     /// Fetch per-trader stats rows for all active traders.
     ///
-    /// Returns the rendered rows alongside the raw open bets so callers can
-    /// reuse the already-fetched data without a second DB round-trip.
+    /// Returns the structured [`TraderRow`] values alongside the raw open bets
+    /// so callers can reuse the already-fetched data without a second DB round-trip.
     async fn collect_trader_rows(&self) -> Result<(Vec<crate::format::TraderRow>, Vec<Bet>)> {
         let traders = self.get_active_traders().await?;
         let open_bets = self.open_bets().await?;

@@ -446,9 +446,15 @@ pub fn format_copy_stats(data: &CopyStatsData) -> String {
             } else {
                 String::new()
             };
+            let safe_name = t
+                .name
+                .replace('_', "\\_")
+                .replace('*', "\\*")
+                .replace('[', "\\[")
+                .replace('`', "\\`");
             msg.push_str(&format!(
                 "\n👤 *{name}*   `€{bankroll:.2}`   {wins}W/{losses}L   `€{pnl:+.2}` ({roi}){open}",
-                name = t.name,
+                name = safe_name,
                 bankroll = t.bankroll,
                 wins = t.wins,
                 losses = t.losses,
