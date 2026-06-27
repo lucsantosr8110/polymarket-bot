@@ -23,9 +23,11 @@ mod live;
 mod model;
 mod scanner;
 mod strategy;
+mod tui;
 
 use anyhow::Result;
 use config::AppConfig;
+use sqlx::PgPool;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -52,11 +54,38 @@ async fn main() -> Result<()> {
             let mut cfg = AppConfig::load()?;
             cfg.scan_interval_mins = 2;
             cfg.news_scan_interval_mins = 2;
-            live::run_live(Arc::new(cfg)).await
+            cfg.bet_scan_interval_mins = 2;
+
+            // Setup database connection
+            let pool = setup_database_pool(&cfg).await?;
+
+            // Start the background bot task
+            let bg_task = tokio::spawn(async move { live::run_live(Arc::new(cfg)).await });
+
+            // Run the TUI
+            let _ = tui::run_tui(pool).await;
+
+            // Cleanup
+            bg_task.abort();
+            Ok(())
+        }
+        "tui" => {
+            // Setup database connection
+            let cfg = AppConfig::load()?;
+            let pool = setup_database_pool(&cfg).await?;
+
+            // Run just the TUI
+            tui::run_tui(pool).await
         }
         _ => {
             let cfg = AppConfig::load()?;
             live::run_live(Arc::new(cfg)).await
         }
     }
+}
+
+/// Setup database connection pool from DATABASE_URL.
+async fn setup_database_pool(cfg: &AppConfig) -> Result<PgPool> {
+    let pool = PgPool::connect(&cfg.database_url).await?;
+    Ok(pool)
 }

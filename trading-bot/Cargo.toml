@@ -30,3 +30,5 @@ mimalloc = "0.1"
 rig-core = { version = "0.32", features = ["all"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", features = ["ring"] }
+ratatui = { version = "0.26", features = ["crossterm"] }
+crossterm = "0.27"
