@@ -114,6 +114,14 @@ polymarket-bot/                  # Cargo workspace root
 └── adr/                         # Architecture Decision Records
 ```
 
+### Migrations convention
+
+`migrations/` holds only schema (`CREATE`/`ALTER`) and idempotent declarative
+seed data. Manual runtime ops (backfills, one-off fixes, data corrections)
+do not belong here — they pollute schema history and re-run on every fresh
+DB. Applied migrations are immutable (sqlx checksums them): never edit or
+delete a migration that has run anywhere.
+
 ## How It Works
 
 ### Trading Bot — ML Pipeline
