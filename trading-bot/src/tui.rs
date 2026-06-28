@@ -83,6 +83,20 @@ impl TuiState {
     }
 }
 
+/// Map a raw `source` value to a short, fixed label so it never gets cut
+/// mid-word by the column width. Unknown sources fall back to a width-safe
+/// truncation.
+fn source_label(source: &str) -> String {
+    match source {
+        "xgboost" => "xgb".to_string(),
+        "llm_consensus" => "llm".to_string(),
+        "copy_trade" => "copy".to_string(),
+        "rejected" => "rej".to_string(),
+        "unknown" | "" => "?".to_string(),
+        other => truncate_string(other, 8),
+    }
+}
+
 fn truncate_string(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -93,18 +107,34 @@ fn truncate_string(s: &str, max: usize) -> String {
     }
 }
 
+/// Default lookback window (minutes) when `TUI_WINDOW_MINS` is unset/invalid.
+const DEFAULT_WINDOW_MINS: i32 = 60;
+
+/// Read the lookback window (minutes) from `TUI_WINDOW_MINS`.
+/// Falls back to [`DEFAULT_WINDOW_MINS`] if unset, unparseable, or not positive.
+fn window_mins() -> i32 {
+    std::env::var("TUI_WINDOW_MINS")
+        .ok()
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .filter(|&m| m > 0)
+        .unwrap_or(DEFAULT_WINDOW_MINS)
+}
+
 /// Query the database for recent signals (placed bets + rejected signals,
-/// last 5 minutes). Uses the shared SQLx pool — same layer as the rest of the bot.
-async fn fetch_recent_signals(pool: &PgPool) -> Result<Vec<UISignal>> {
+/// within the last `window_mins` minutes). Uses the shared SQLx pool — same
+/// layer as the rest of the bot. The window is bound as an integer parameter
+/// (via `make_interval`), so it cannot be used for SQL injection.
+async fn fetch_recent_signals(pool: &PgPool, window_mins: i32) -> Result<Vec<UISignal>> {
     let mut signals = Vec::new();
 
     let bet_rows = sqlx::query(
         "SELECT market_id, question, side, estimated_prob, kelly_size, source, \
                 placed_at, resolved, won \
          FROM bets \
-         WHERE placed_at > NOW() - INTERVAL '5 minutes' \
+         WHERE placed_at > NOW() - make_interval(mins => $1) \
          ORDER BY placed_at DESC",
     )
+    .bind(window_mins)
     .fetch_all(pool)
     .await?;
 
@@ -137,9 +167,10 @@ async fn fetch_recent_signals(pool: &PgPool) -> Result<Vec<UISignal>> {
     let rejected_rows = sqlx::query(
         "SELECT market_id, question, estimated_prob, edge, created_at \
          FROM rejected_signals \
-         WHERE created_at > NOW() - INTERVAL '5 minutes' \
+         WHERE created_at > NOW() - make_interval(mins => $1) \
          ORDER BY created_at DESC",
     )
+    .bind(window_mins)
     .fetch_all(pool)
     .await?;
 
@@ -188,8 +219,9 @@ async fn run_loop<B: ratatui::backend::Backend>(
 ) -> Result<()> {
     let mut state = TuiState::new();
     let mut tick = time::interval(Duration::from_secs(2));
+    let window = window_mins();
 
-    if let Ok(initial) = fetch_recent_signals(pool).await {
+    if let Ok(initial) = fetch_recent_signals(pool, window).await {
         state.add_signals(initial);
     }
 
@@ -212,7 +244,7 @@ async fn run_loop<B: ratatui::backend::Backend>(
         }
 
         tick.tick().await;
-        match fetch_recent_signals(pool).await {
+        match fetch_recent_signals(pool, window).await {
             Ok(new) if !new.is_empty() => state.add_signals(new),
             Ok(_) => {}
             Err(e) => warn!("Failed to fetch signals: {}", e),
@@ -228,6 +260,35 @@ fn draw(f: &mut ratatui::Frame, state: &mut TuiState) {
         .margin(1)
         .constraints([Constraint::Percentage(80), Constraint::Length(3)])
         .split(f.size());
+
+    if state.signals.is_empty() {
+        let block = Block::default()
+            .title("Real-time Signals")
+            .borders(Borders::ALL);
+        let inner = block.inner(chunks[0]);
+        f.render_widget(block, chunks[0]);
+
+        // Vertically center the placeholder within the bordered area.
+        let mid = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(45),
+                Constraint::Length(1),
+                Constraint::Percentage(45),
+            ])
+            .split(inner);
+        let placeholder = Paragraph::new("Aguardando sinais...")
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            );
+        f.render_widget(placeholder, mid[1]);
+
+        draw_footer(f, state, chunks[1]);
+        return;
+    }
 
     let widths = [
         Constraint::Length(8),
@@ -266,7 +327,7 @@ fn draw(f: &mut ratatui::Frame, state: &mut TuiState) {
                 s.status.clone(),
                 Style::default().fg(status_color),
             )),
-            Cell::from(Span::raw(s.source.clone())),
+            Cell::from(Span::raw(source_label(&s.source))),
         ])
         .height(1)
     });
@@ -293,6 +354,10 @@ fn draw(f: &mut ratatui::Frame, state: &mut TuiState) {
 
     f.render_stateful_widget(table, chunks[0], &mut state.table_state);
 
+    draw_footer(f, state, chunks[1]);
+}
+
+fn draw_footer(f: &mut ratatui::Frame, state: &TuiState, area: ratatui::layout::Rect) {
     let last = state
         .signals
         .first()
@@ -311,5 +376,5 @@ fn draw(f: &mut ratatui::Frame, state: &mut TuiState) {
             .border_style(Style::default().fg(Color::DarkGray)),
     );
 
-    f.render_widget(footer, chunks[1]);
+    f.render_widget(footer, area);
 }
