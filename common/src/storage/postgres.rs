@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
@@ -847,23 +847,48 @@ impl PgPortfolio {
         .fetch_one(&mut *tx)
         .await?;
 
-        // Batch update: deduct bankrolls and increment signal counters in one query
-        let strat_bankroll_key = format!("bankroll:{}", bet.strategy);
-        let strat_signals_key = format!("signals_sent_today:{}", bet.strategy);
-        let total_deduction = bet.cost + bet.fee;
+        // Lazy-init strategy keys if not exists (read starting_bankroll or fallback to 300.0)
         sqlx::query(
-            "UPDATE portfolio SET \
-               value_f64 = CASE \
-                 WHEN key IN ($1, 'bankroll') THEN value_f64 - $2 \
-                 WHEN key IN ($3, 'signals_sent_today') THEN value_f64 + 1 \
-               END \
-             WHERE key IN ($1, 'bankroll', $3, 'signals_sent_today')",
+            "INSERT INTO portfolio (key, value_f64)
+             SELECT 'bankroll:' || $1, COALESCE(
+               (SELECT value_f64 FROM portfolio WHERE key = 'starting_bankroll:' || $1),
+               (SELECT value_f64 FROM portfolio WHERE key = 'starting_bankroll'),
+               300.0
+             )
+             UNION ALL
+             SELECT 'signals_sent_today:' || $1, 0.0
+             ON CONFLICT (key) DO NOTHING",
         )
-        .bind(&strat_bankroll_key)
-        .bind(total_deduction)
-        .bind(&strat_signals_key)
+        .bind(&bet.strategy)
         .execute(&mut *tx)
         .await?;
+
+        // Deduct bankroll and increment signal counter
+        let bankroll_key = format!("bankroll:{}", bet.strategy);
+        let signals_key = format!("signals_sent_today:{}", bet.strategy);
+        let total_deduction = bet.cost + bet.fee;
+        let r = sqlx::query(
+            "UPDATE portfolio SET value_f64 = CASE
+               WHEN key = $1 THEN value_f64 - $2
+               WHEN key = $3 THEN value_f64 + 1
+               ELSE value_f64
+             END
+             WHERE key IN ($1, $3)",
+        )
+        .bind(&bankroll_key)
+        .bind(total_deduction)
+        .bind(&signals_key)
+        .execute(&mut *tx)
+        .await?;
+
+        // Strict guard: exactly 2 rows must be affected (bankroll + signals)
+        if r.rows_affected() != 2 {
+            return Err(anyhow!(
+                "portfolio update affected {} rows, expected 2 for strategy '{}'",
+                r.rows_affected(),
+                bet.strategy
+            ));
+        }
 
         // Store feature vector for online learning
         if let Some(features) = &bet.features {
