@@ -3,7 +3,10 @@ use chrono::{DateTime, Utc};
 use reqwest::Client;
 use std::time::Duration;
 
+use crate::config::AppConfig;
 use crate::data::models::GammaMarket;
+
+use super::openrouter::openrouter_attribution_headers;
 
 /// A news item from any source.
 #[derive(Debug, Clone)]
@@ -36,16 +39,18 @@ const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub struct NewsAggregator {
     http: Client,
     openai_api_key: Option<String>,
+    attribution_headers: Vec<(&'static str, String)>,
 }
 
 impl NewsAggregator {
-    pub fn new(http: Client) -> Self {
+    pub fn new(http: Client, cfg: &AppConfig) -> Self {
         let openai_api_key = std::env::var("OPENROUTER_API_KEY")
             .or_else(|_| std::env::var("OPENAI_API_KEY"))
             .ok();
         Self {
             http,
             openai_api_key,
+            attribution_headers: openrouter_attribution_headers(cfg),
         }
     }
 
@@ -296,10 +301,15 @@ impl NewsAggregator {
 
     /// Call the embeddings API (via OpenRouter). Returns one vector per input text.
     async fn embed_texts(&self, texts: &[String], api_key: &str) -> Result<Vec<Vec<f64>>> {
-        let resp = self
+        let mut req = self
             .http
             .post(format!("{OPENROUTER_BASE_URL}/embeddings"))
-            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Authorization", format!("Bearer {api_key}"));
+        for (name, value) in &self.attribution_headers {
+            req = req.header(*name, value);
+        }
+
+        let resp = req
             .json(&serde_json::json!({
                 "model": EMBEDDING_MODEL,
                 "input": texts,

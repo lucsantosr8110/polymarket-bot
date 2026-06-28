@@ -5,6 +5,7 @@ use rig::client::CompletionClient;
 #[cfg(test)]
 use rig::client::ProviderClient;
 use rig::completion::Chat;
+use rig::http_client::{HeaderMap, HeaderValue};
 use rig::providers::openai;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use crate::storage::portfolio::{BetContext, BetSide};
 use crate::storage::postgres::RejectedSignal;
 
 use super::news::{NewsAggregator, NewsItem, NewsMatch, dedup_news};
+use super::openrouter::openrouter_attribution_headers;
 
 const GAMMA_API: &str = "https://gamma-api.polymarket.com";
 const CLOB_API: &str = "https://clob.polymarket.com";
@@ -43,11 +45,24 @@ fn openrouter_api_key() -> Result<String> {
 /// Build the OpenAI-compatible client pointed at OpenRouter instead of
 /// api.openai.com. All chat/completion traffic (consensus agents,
 /// correlation check) goes through this client.
-fn build_openrouter_client() -> Result<openai::Client> {
+fn build_openrouter_client(cfg: &AppConfig) -> Result<openai::Client> {
     let api_key = openrouter_api_key()?;
-    openai::Client::builder()
+    let mut builder = openai::Client::builder()
         .api_key(&api_key)
-        .base_url(OPENROUTER_BASE_URL)
+        .base_url(OPENROUTER_BASE_URL);
+
+    let attribution = openrouter_attribution_headers(cfg);
+    if !attribution.is_empty() {
+        let mut headers = HeaderMap::new();
+        for (name, value) in attribution {
+            let header_value = HeaderValue::from_str(&value)
+                .map_err(|e| anyhow::anyhow!("invalid OpenRouter header value: {e}"))?;
+            headers.insert(name, header_value);
+        }
+        builder = builder.http_headers(headers);
+    }
+
+    builder
         .build()
         .map_err(|e| anyhow::anyhow!("failed to build OpenRouter client: {e}"))
 }
@@ -317,9 +332,9 @@ impl LiveScanner {
         };
 
         Ok(Self {
-            news: NewsAggregator::new(http.clone()),
+            news: NewsAggregator::new(http.clone(), cfg),
             http,
-            openai_client: build_openrouter_client()?,
+            openai_client: build_openrouter_client(cfg)?,
             pool,
             calibration: RwLock::new(calibration),
             cfg: Arc::clone(cfg),

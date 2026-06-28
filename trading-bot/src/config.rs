@@ -203,6 +203,16 @@ pub struct AppConfig {
     /// Port for the Prometheus metrics HTTP endpoint.
     #[config(env = "METRICS_PORT", default = 9000)]
     pub metrics_port: u16,
+
+    /// OpenRouter attribution header (HTTP-Referer) for rankings. Optional —
+    /// no header is sent if unset.
+    #[config(env = "OPENROUTER_HTTP_REFERER", default = "")]
+    pub openrouter_http_referer: String,
+
+    /// OpenRouter attribution header (X-Title) for rankings. Optional — no
+    /// header is sent if unset.
+    #[config(env = "OPENROUTER_APP_TITLE", default = "")]
+    pub openrouter_app_title: String,
 }
 
 impl AppConfig {
@@ -280,6 +290,8 @@ impl AppConfig {
             min_bet_price: 0.15,
             model_sidecar_url: String::new(),
             metrics_port: 9000,
+            openrouter_http_referer: String::new(),
+            openrouter_app_title: String::new(),
         }
     }
 }
