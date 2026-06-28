@@ -23,6 +23,57 @@ struct PendingBet<'a> {
     fee: f64,
 }
 
+/// Final bet sizing once the kelly amount has cleared the min-bet and
+/// bankroll guards.
+#[derive(Debug)]
+struct BetSizing {
+    bet_amount: f64,
+    shares: f64,
+    slipped_price: f64,
+    fee: f64,
+}
+
+/// Why a kelly-sized bet was rejected before reaching the bankroll.
+#[derive(Debug)]
+enum BetSizingError {
+    BelowMinBet { raw_bet: f64 },
+    InsufficientBankroll { total_cost: f64 },
+}
+
+/// Size a bet from the strategy's kelly fraction, applying the min-bet and
+/// bankroll guards. Pure — no I/O — so the gating logic from `bet_scan_cycle`
+/// can be exercised with a fixture instead of a live `PgPortfolio`.
+fn size_bet(
+    strat_bankroll: f64,
+    kelly_size: f64,
+    min_bet: f64,
+    current_price: f64,
+    slippage_pct: f64,
+    fee_pct: f64,
+) -> Result<BetSizing, BetSizingError> {
+    let raw_bet = strat_bankroll * kelly_size;
+    if raw_bet < min_bet {
+        return Err(BetSizingError::BelowMinBet { raw_bet });
+    }
+
+    let bet_amount = raw_bet;
+    let slipped_price = (current_price * (1.0 + slippage_pct)).min(0.99);
+    let shares = bet_amount / slipped_price;
+    let fee = bet_amount * fee_pct;
+    let total_cost = bet_amount + fee;
+
+    if total_cost > strat_bankroll {
+        return Err(BetSizingError::InsufficientBankroll { total_cost });
+    }
+
+    Ok(BetSizing {
+        bet_amount,
+        shares,
+        slipped_price,
+        fee,
+    })
+}
+
 pub async fn bet_scan_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
@@ -131,46 +182,49 @@ pub async fn bet_scan_cycle(
                     };
 
                     let strat_bankroll = portfolio.strategy_bankroll(&strat.name).await?;
-                    let raw_bet = strat_bankroll * accepted.kelly_size;
-                    if raw_bet < strat.min_bet {
-                        tracing::info!(
-                            strategy = %strat.name,
-                            market = %signal.question,
-                            kelly_bet = format_args!("€{raw_bet:.2}"),
-                            min_bet = format_args!("€{:.2}", strat.min_bet),
-                            "Strategy rejected signal (kelly below min)"
-                        );
-                        strategy_rejections.push(format!(
-                            "{} {}: kelly €{:.2} < min €{:.2}",
-                            strat.label(),
-                            format::truncate(&signal.question, 40),
-                            raw_bet,
-                            strat.min_bet,
-                        ));
-                        continue;
-                    }
-                    let bet_amount = raw_bet;
-                    let slipped_price = (signal.current_price * (1.0 + cfg.slippage_pct)).min(0.99);
-                    let shares = bet_amount / slipped_price;
-                    let fee = bet_amount * cfg.fee_pct;
-                    let total_cost = bet_amount + fee;
-
-                    if total_cost > strat_bankroll {
-                        tracing::warn!(
-                            strategy = %strat.name,
-                            bankroll = format_args!("€{strat_bankroll:.2}"),
-                            cost = format_args!("€{total_cost:.2}"),
-                            "Insufficient strategy bankroll"
-                        );
-                        strategy_rejections.push(format!(
-                            "{} {}: cost €{:.2} > bankroll €{:.2}",
-                            strat.label(),
-                            format::truncate(&signal.question, 40),
-                            total_cost,
-                            strat_bankroll,
-                        ));
-                        continue;
-                    }
+                    let sizing = match size_bet(
+                        strat_bankroll,
+                        accepted.kelly_size,
+                        strat.min_bet,
+                        signal.current_price,
+                        cfg.slippage_pct,
+                        cfg.fee_pct,
+                    ) {
+                        Ok(sizing) => sizing,
+                        Err(BetSizingError::BelowMinBet { raw_bet }) => {
+                            tracing::info!(
+                                strategy = %strat.name,
+                                market = %signal.question,
+                                kelly_bet = format_args!("€{raw_bet:.2}"),
+                                min_bet = format_args!("€{:.2}", strat.min_bet),
+                                "Strategy rejected signal (kelly below min)"
+                            );
+                            strategy_rejections.push(format!(
+                                "{} {}: kelly €{:.2} < min €{:.2}",
+                                strat.label(),
+                                format::truncate(&signal.question, 40),
+                                raw_bet,
+                                strat.min_bet,
+                            ));
+                            continue;
+                        }
+                        Err(BetSizingError::InsufficientBankroll { total_cost }) => {
+                            tracing::warn!(
+                                strategy = %strat.name,
+                                bankroll = format_args!("€{strat_bankroll:.2}"),
+                                cost = format_args!("€{total_cost:.2}"),
+                                "Insufficient strategy bankroll"
+                            );
+                            strategy_rejections.push(format!(
+                                "{} {}: cost €{:.2} > bankroll €{:.2}",
+                                strat.label(),
+                                format::truncate(&signal.question, 40),
+                                total_cost,
+                                strat_bankroll,
+                            ));
+                            continue;
+                        }
+                    };
 
                     // Passed all guards — queue for correlation check
                     bet_market_ids.insert(signal.market_id.clone());
@@ -178,10 +232,10 @@ pub async fn bet_scan_cycle(
                         signal,
                         strat,
                         kelly_size: accepted.kelly_size,
-                        bet_amount,
-                        shares,
-                        slipped_price,
-                        fee,
+                        bet_amount: sizing.bet_amount,
+                        shares: sizing.shares,
+                        slipped_price: sizing.slipped_price,
+                        fee: sizing.fee,
                     });
                     break;
                 }
@@ -426,4 +480,66 @@ pub async fn bet_scan_cycle(
         "Bet scan complete"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A signal with a comfortable edge clears every guard in
+    /// `bet_scan_cycle` (strategy.evaluate, min-bet, bankroll) — this is the
+    /// "guaranteed edge" fixture the bet-write path is exercised with.
+    #[test]
+    fn test_size_bet_guaranteed_edge_accepted() {
+        let sizing = size_bet(
+            /* strat_bankroll */ 300.0,
+            /* kelly_size */ 0.10,
+            /* min_bet */ 5.0,
+            /* current_price */ 0.50,
+            /* slippage_pct */ 0.01,
+            /* fee_pct */ 0.02,
+        )
+        .expect("comfortable edge should clear min-bet and bankroll guards");
+
+        assert!((sizing.bet_amount - 30.0).abs() < 1e-9);
+        assert!(sizing.slipped_price > 0.50 && sizing.slipped_price <= 0.99);
+        assert!(sizing.shares > 0.0);
+        assert!((sizing.fee - sizing.bet_amount * 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_size_bet_rejects_below_min_bet() {
+        // raw_bet = 300.0 * 0.01 = 3.0 < min_bet 5.0
+        let err = size_bet(300.0, 0.01, 5.0, 0.50, 0.01, 0.02).unwrap_err();
+        match err {
+            BetSizingError::BelowMinBet { raw_bet } => {
+                assert!((raw_bet - 3.0).abs() < 1e-9);
+            }
+            BetSizingError::InsufficientBankroll { .. } => {
+                panic!("expected BelowMinBet, got InsufficientBankroll")
+            }
+        }
+    }
+
+    #[test]
+    fn test_size_bet_rejects_insufficient_bankroll() {
+        // raw_bet = 5.05 * 1.0 = 5.05 >= min_bet 5.0, but cost (5.05 + 2% fee)
+        // exceeds the 5.05 bankroll.
+        let err = size_bet(5.05, 1.0, 5.0, 0.50, 0.01, 0.02).unwrap_err();
+        match err {
+            BetSizingError::InsufficientBankroll { total_cost } => {
+                assert!(total_cost > 5.05);
+            }
+            BetSizingError::BelowMinBet { .. } => {
+                panic!("expected InsufficientBankroll, got BelowMinBet")
+            }
+        }
+    }
+
+    #[test]
+    fn test_size_bet_slipped_price_capped_at_99c() {
+        // current_price * (1 + slippage) would exceed 0.99 — must clamp.
+        let sizing = size_bet(300.0, 0.10, 5.0, 0.98, 0.05, 0.02).unwrap();
+        assert!(sizing.slipped_price <= 0.99);
+    }
 }
