@@ -71,9 +71,22 @@ pub struct AppConfig {
     #[config(env = "MIN_EFFECTIVE_EDGE", default = 0.08)]
     pub min_effective_edge: f64,
 
-    /// LLM model to use for news impact assessment.
+    /// LLM model to use for news impact assessment (legacy single-model
+    /// fallback — used only if `LLM_MODELS` is empty).
     #[config(env = "LLM_MODEL", default = "gpt-4o")]
     pub llm_model: String,
+
+    /// Comma-separated OpenRouter model slugs to rotate across for chat/
+    /// completion calls (consensus agents + correlation check). On a failed
+    /// call (rate-limit/429/unavailable) the next model is tried. Defaults
+    /// to a free-tier rotation list; falls back to `llm_model` if set to "".
+    /// Does NOT affect embeddings (news.rs) — those stay pinned to a fixed
+    /// paid model since OpenRouter has no free embeddings tier.
+    #[config(
+        env = "LLM_MODELS",
+        default = "openai/gpt-oss-120b:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-31b-it:free,openai/gpt-oss-20b:free"
+    )]
+    pub llm_models_csv: String,
 
     /// Heartbeat interval in minutes (0 to disable).
     #[config(env = "HEARTBEAT_INTERVAL_MINS", default = 60)]
@@ -197,6 +210,22 @@ impl AppConfig {
         Self::builder().env().load()
     }
 
+    /// Parsed, trimmed, non-empty model list from `LLM_MODELS` (CSV).
+    /// Falls back to `[llm_model]` if `LLM_MODELS` is unset/empty.
+    pub fn llm_models(&self) -> Vec<String> {
+        let parsed: Vec<String> = self
+            .llm_models_csv
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parsed.is_empty() {
+            vec![self.llm_model.clone()]
+        } else {
+            parsed
+        }
+    }
+
     #[cfg(test)]
     pub fn test_default() -> Self {
         Self {
@@ -217,6 +246,7 @@ impl AppConfig {
             max_model_candidates: 15,
             min_effective_edge: 0.08,
             llm_model: "gpt-4o".into(),
+            llm_models_csv: String::new(),
             heartbeat_interval_mins: 60,
             retrain_interval_hours: 24,
             consensus_agents: 2,

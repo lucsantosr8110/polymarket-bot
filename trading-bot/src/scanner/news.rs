@@ -25,6 +25,14 @@ pub struct NewsMatch {
 /// Minimum cosine similarity to consider a news item relevant to a market.
 const EMBEDDING_MIN_SIMILARITY: f64 = 0.35;
 
+/// Embeddings have no free tier on OpenRouter, so this stays pinned to a
+/// fixed paid model regardless of the chat/completion rotation list.
+const EMBEDDING_MODEL: &str = "text-embedding-3-small";
+
+/// Same OpenRouter base URL used for chat/completion (see `live.rs`) — kept
+/// here too since this client is hand-rolled (not via the `rig` crate).
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
 pub struct NewsAggregator {
     http: Client,
     openai_api_key: Option<String>,
@@ -32,7 +40,9 @@ pub struct NewsAggregator {
 
 impl NewsAggregator {
     pub fn new(http: Client) -> Self {
-        let openai_api_key = std::env::var("OPENAI_API_KEY").ok();
+        let openai_api_key = std::env::var("OPENROUTER_API_KEY")
+            .or_else(|_| std::env::var("OPENAI_API_KEY"))
+            .ok();
         Self {
             http,
             openai_api_key,
@@ -284,14 +294,14 @@ impl NewsAggregator {
         Ok(matches)
     }
 
-    /// Call OpenAI embeddings API. Returns one vector per input text.
+    /// Call the embeddings API (via OpenRouter). Returns one vector per input text.
     async fn embed_texts(&self, texts: &[String], api_key: &str) -> Result<Vec<Vec<f64>>> {
         let resp = self
             .http
-            .post("https://api.openai.com/v1/embeddings")
+            .post(format!("{OPENROUTER_BASE_URL}/embeddings"))
             .header("Authorization", format!("Bearer {api_key}"))
             .json(&serde_json::json!({
-                "model": "text-embedding-3-small",
+                "model": EMBEDDING_MODEL,
                 "input": texts,
             }))
             .send()
@@ -300,7 +310,7 @@ impl NewsAggregator {
 
         if !resp.status().is_success() {
             let body: String = resp.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI embeddings API error: {body}");
+            anyhow::bail!("Embeddings API error: {body}");
         }
 
         let json: serde_json::Value = resp.json().await.context("parsing embeddings response")?;

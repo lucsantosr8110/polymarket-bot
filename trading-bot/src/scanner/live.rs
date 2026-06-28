@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use reqwest::Client;
-use rig::client::{CompletionClient, ProviderClient};
+use rig::client::CompletionClient;
+#[cfg(test)]
+use rig::client::ProviderClient;
 use rig::completion::Chat;
 use rig::providers::openai;
 use sqlx::PgPool;
@@ -23,6 +25,32 @@ use super::news::{NewsAggregator, NewsItem, NewsMatch, dedup_news};
 
 const GAMMA_API: &str = "https://gamma-api.polymarket.com";
 const CLOB_API: &str = "https://clob.polymarket.com";
+
+/// OpenRouter's OpenAI-compatible base URL. Chat/completion calls go through
+/// here so free-tier `:free` models can be used; embeddings (news.rs) also
+/// route through this base URL but stay pinned to a paid model since
+/// OpenRouter has no free embeddings tier.
+const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
+/// Read the OpenRouter API key. Prefers `OPENROUTER_API_KEY`; falls back to
+/// the legacy `OPENAI_API_KEY` name so existing `.env` files keep working.
+fn openrouter_api_key() -> Result<String> {
+    std::env::var("OPENROUTER_API_KEY")
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .context("OPENROUTER_API_KEY (or legacy OPENAI_API_KEY) not set")
+}
+
+/// Build the OpenAI-compatible client pointed at OpenRouter instead of
+/// api.openai.com. All chat/completion traffic (consensus agents,
+/// correlation check) goes through this client.
+fn build_openrouter_client() -> Result<openai::Client> {
+    let api_key = openrouter_api_key()?;
+    openai::Client::builder()
+        .api_key(&api_key)
+        .base_url(OPENROUTER_BASE_URL)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build OpenRouter client: {e}"))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SignalSource {
@@ -291,7 +319,7 @@ impl LiveScanner {
         Ok(Self {
             news: NewsAggregator::new(http.clone()),
             http,
-            openai_client: openai::Client::from_env(),
+            openai_client: build_openrouter_client()?,
             pool,
             calibration: RwLock::new(calibration),
             cfg: Arc::clone(cfg),
@@ -376,16 +404,42 @@ impl LiveScanner {
         }
     }
 
-    /// Build an LLM agent for a specific role.
-    fn build_agent(
+    /// Build an LLM agent for a specific role and model.
+    fn build_agent_for(
         &self,
         role: AgentRole,
+        model: &str,
     ) -> rig::agent::Agent<openai::responses_api::ResponsesCompletionModel> {
         self.openai_client
-            .agent(&self.cfg.llm_model)
+            .agent(model)
             .preamble(role.preamble())
             .temperature(role.temperature())
             .build()
+    }
+
+    /// Chat with failover across `cfg.llm_models()`: tries each model in
+    /// order, moving to the next on any error (rate-limit/429/unavailable).
+    /// Chat/completion only — embeddings always stay pinned to a fixed model.
+    async fn chat_with_rotation(&self, role: AgentRole, prompt: &str) -> Result<String> {
+        let models = self.cfg.llm_models();
+        let mut last_err = None;
+        for model in &models {
+            let agent = self.build_agent_for(role, model);
+            match agent.chat(prompt, vec![]).await {
+                Ok(resp) => {
+                    tracing::info!(model = %model, agent = role.label(), "LLM call succeeded");
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    tracing::warn!(model = %model, agent = role.label(), err = %e, "LLM call failed, trying next model");
+                    last_err = Some(anyhow::anyhow!(
+                        "LLM call ({}) failed on model {model}: {e}",
+                        role.label()
+                    ));
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no LLM models configured")))
     }
 
     pub async fn check_market_resolution(&self, market_id: &str) -> Result<Option<bool>> {
@@ -692,11 +746,9 @@ impl LiveScanner {
                 tokio::time::sleep(Duration::from_secs(21)).await;
             }
 
-            let agent = self.build_agent(role);
-            let result = agent
-                .chat(prompt.as_str(), vec![])
+            let result = self
+                .chat_with_rotation(role, prompt.as_str())
                 .await
-                .map_err(|e| anyhow::anyhow!("LLM call ({}) failed: {e}", role.label()))
                 .and_then(|resp| parse_llm_response(&resp));
 
             match result {
@@ -1724,7 +1776,13 @@ impl LiveScanner {
             .map(|b| (b.question.clone(), b.side.clone()))
             .collect();
         open.extend(blocked.iter().cloned());
-        run_correlation_check(&self.openai_client, &self.cfg.llm_model, candidates, &open).await
+        run_correlation_check(
+            &self.openai_client,
+            &self.cfg.llm_models(),
+            candidates,
+            &open,
+        )
+        .await
     }
 }
 
@@ -1732,7 +1790,7 @@ impl LiveScanner {
 /// so it can be called directly in tests.
 async fn run_correlation_check(
     openai_client: &openai::Client,
-    model: &str,
+    models: &[String],
     candidates: &[(String, String, BetSide)],
     open_bets: &[(String, BetSide)],
 ) -> Result<Vec<CorrelationDecision>> {
@@ -1774,25 +1832,42 @@ async fn run_correlation_check(
          - reason: one short sentence"
     );
 
-    let agent = openai_client
-        .agent(model)
-        .preamble(
-            "You are a portfolio overlap detector for a prediction market trading bot.\n\
-             REJECT a candidate only for clear overlaps:\n\
-             - Threshold ladders: e.g. NO on oil hitting $100 while already NO on oil hitting $105 \
-               (if $100 hits so does $105 — positions are entangled)\n\
-             - Partition buckets: e.g. YES on tweet range 260-279 while already YES on 280-299 \
-               for the same period (at most one resolves YES)\n\
-             - Same event different framing: essentially identical question under a different title\n\
-             KEEP everything else. Be conservative — only reject clear logical overlaps.",
-        )
-        .temperature(0.0)
-        .build();
+    const CORRELATION_PREAMBLE: &str = "You are a portfolio overlap detector for a prediction market trading bot.\n\
+         REJECT a candidate only for clear overlaps:\n\
+         - Threshold ladders: e.g. NO on oil hitting $100 while already NO on oil hitting $105 \
+           (if $100 hits so does $105 — positions are entangled)\n\
+         - Partition buckets: e.g. YES on tweet range 260-279 while already YES on 280-299 \
+           for the same period (at most one resolves YES)\n\
+         - Same event different framing: essentially identical question under a different title\n\
+         KEEP everything else. Be conservative — only reject clear logical overlaps.";
 
-    let response = agent
-        .chat(&prompt, vec![])
-        .await
-        .map_err(|e| anyhow::anyhow!("Correlation check LLM call failed: {e}"))?;
+    let mut response = None;
+    let mut last_err = None;
+    for model in models {
+        let agent = openai_client
+            .agent(model.as_str())
+            .preamble(CORRELATION_PREAMBLE)
+            .temperature(0.0)
+            .build();
+
+        match agent.chat(&prompt, vec![]).await {
+            Ok(resp) => {
+                tracing::info!(model = %model, "Correlation check LLM call succeeded");
+                response = Some(resp);
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(model = %model, err = %e, "Correlation check LLM call failed, trying next model");
+                last_err = Some(e);
+            }
+        }
+    }
+    let response = response.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Correlation check LLM call failed on all models: {}",
+            last_err.map(|e| e.to_string()).unwrap_or_default()
+        )
+    })?;
 
     tracing::info!(response = %response, "Correlation check raw response");
 
@@ -2345,9 +2420,10 @@ mod tests {
             ),
         ];
 
-        let decisions = run_correlation_check(&client, "gpt-4o", &candidates, &open_bets)
-            .await
-            .expect("LLM call failed");
+        let decisions =
+            run_correlation_check(&client, &["gpt-4o".to_string()], &candidates, &open_bets)
+                .await
+                .expect("LLM call failed");
 
         assert_eq!(decisions.len(), 3);
 
