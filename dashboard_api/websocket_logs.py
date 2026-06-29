@@ -24,11 +24,19 @@ async def stream_logs(websocket: WebSocket) -> None:
 
 async def _tail_file(websocket: WebSocket, log_path: Path) -> None:
     position = log_path.stat().st_size if log_path.exists() else 0
+    was_present = log_path.exists()
     while True:
         if not log_path.exists():
+            if was_present:
+                await websocket.send_json(
+                    _log_message("WARN", "dashboard_api.logs", "Log file disappeared; waiting for it to reappear", {})
+                )
+                was_present = False
+                position = 0
             await asyncio.sleep(1)
             continue
 
+        was_present = True
         with log_path.open("r", encoding="utf-8", errors="replace") as handle:
             handle.seek(position)
             while line := handle.readline():
