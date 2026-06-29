@@ -184,6 +184,17 @@ impl Signal {
     }
 }
 
+/// Sort signals by score descending. A `NaN` score (e.g. from a malformed
+/// sidecar prediction) must not panic — it's treated as equal so the sort
+/// stays stable instead of killing the bet_scan task.
+fn sort_signals_by_score_desc(signals: &mut [Signal]) {
+    signals.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
 pub struct ScanResult {
     pub signals: Vec<Signal>,
     pub rejections: Vec<RejectedSignal>,
@@ -1379,7 +1390,7 @@ impl LiveScanner {
             });
         }
 
-        signals.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap());
+        sort_signals_by_score_desc(&mut signals);
 
         tracing::info!(
             signals = signals.len(),
@@ -1646,7 +1657,7 @@ impl LiveScanner {
             });
         }
 
-        signals.sort_by(|a, b| b.score().partial_cmp(&a.score()).unwrap());
+        sort_signals_by_score_desc(&mut signals);
 
         Ok(ScanResult {
             signals,
@@ -2269,6 +2280,42 @@ mod tests {
         };
         let expected = 0.20 * 0.80 * 0.10;
         assert!((signal.score() - expected).abs() < 1e-9);
+    }
+
+    fn make_signal_with_edge(edge: f64) -> Signal {
+        Signal {
+            market_id: "test".into(),
+            question: "Test?".into(),
+            side: BetSide::Yes,
+            current_price: 0.50,
+            estimated_prob: 0.70,
+            confidence: 0.80,
+            edge,
+            kelly_size: 0.10,
+            reasoning: "test".into(),
+            end_date: None,
+            volume: 1000.0,
+            polymarket_url: String::new(),
+            prior: 0.50,
+            combined_lr: 2.33,
+            news_matched_count: 3,
+            source: SignalSource::LlmConsensus,
+            days_to_expiry: 7.0,
+            event_slug: None,
+            context: BetContext::default(),
+            features: None,
+        }
+    }
+
+    #[test]
+    fn test_sort_signals_by_score_desc_does_not_panic_on_nan() {
+        let mut signals = vec![
+            make_signal_with_edge(0.20),
+            make_signal_with_edge(f64::NAN),
+            make_signal_with_edge(0.10),
+        ];
+        sort_signals_by_score_desc(&mut signals);
+        assert_eq!(signals.len(), 3);
     }
 
     // --- parse edge cases ---
