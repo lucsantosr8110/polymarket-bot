@@ -326,6 +326,30 @@ Secrets never live in the repo: the server `.env` is written from the
 override the Grafana admin credentials (`GF_SECURITY_ADMIN_PASSWORD`) and the
 Postgres password via the server environment.
 
+### Running locally without the private GHCR images
+
+The `bot`/`copy-trading-bot` images default to the private GHCR registry. To run
+the full stack locally without registry access, build glibc images from source
+and tag them with the names the compose file expects:
+
+```bash
+cargo build -p trading-bot -p copy-trading-bot --release
+docker build -f trading-bot/Dockerfile.local      -t ghcr.io/skharchikov/polymarket-bot:latest .
+docker build -f copy-trading-bot/Dockerfile.local -t ghcr.io/skharchikov/polymarket-bot-copy:latest .
+
+mkdir -p logs && chmod 777 logs   # bot runs as uid 10001 and tees to logs/bot.log
+
+# copy-trading-bot reuses the main Telegram creds when its own are unset:
+export COPY_TELEGRAM_BOT_TOKEN="$(grep -E '^TELEGRAM_BOT_TOKEN=' .env | cut -d= -f2-)"
+export COPY_TELEGRAM_CHAT_ID="$(grep -E '^TELEGRAM_CHAT_ID=' .env | cut -d= -f2-)"
+
+docker compose up -d
+```
+
+> The `model` volume starts empty, so `model-server` trains from scratch on first
+> boot. To use an already-trained `model/` directory, seed the volume first:
+> `docker run --rm -v polymarket-bot_model:/model -v "$(pwd)/model":/src:ro alpine cp -a /src/. /model/`
+
 ### Local Development
 
 ```bash
