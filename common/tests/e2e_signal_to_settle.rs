@@ -176,7 +176,7 @@ async fn signal_to_place_bet_to_settle_e2e() {
 
     // --- 4. settle market WIN (real resolve_bet) -> payout, bankroll credited.
     let resolved_bet = portfolio
-        .resolve_bet(&market_id, true)
+        .resolve_bet(&market_id, true, 0.02)
         .await
         .expect("resolve_bet should succeed")
         .expect("resolve_bet must find the open bet");

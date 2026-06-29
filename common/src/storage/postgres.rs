@@ -447,7 +447,10 @@ impl PgPortfolio {
         }
 
         let ids: Vec<&str> = open.iter().map(|b| b.market_id.as_str()).collect();
-        let prices = fetch_yes_prices(&http, &ids).await;
+        // Literal, not config-driven: common/ has no AppConfig, and threading a
+        // gamma_api override through every Telegram command handler in both
+        // bins for an URL that never changes isn't worth the blast radius.
+        let prices = fetch_yes_prices(&http, &ids, "https://gamma-api.polymarket.com").await;
 
         let views: Vec<OpenBetView> = open
             .iter()
@@ -491,7 +494,7 @@ impl PgPortfolio {
         };
 
         let ids: Vec<&str> = open.iter().map(|b| b.market_id.as_str()).collect();
-        let prices = fetch_yes_prices(&http, &ids).await;
+        let prices = fetch_yes_prices(&http, &ids, "https://gamma-api.polymarket.com").await;
 
         let mut ml_unrealized = 0.0_f64;
         let mut ml_exposure = 0.0_f64;
@@ -988,7 +991,12 @@ impl PgPortfolio {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn resolve_bet(&self, market_id: &str, yes_won: bool) -> Result<Option<ResolvedBet>> {
+    pub async fn resolve_bet(
+        &self,
+        market_id: &str,
+        yes_won: bool,
+        fee_pct: f64,
+    ) -> Result<Option<ResolvedBet>> {
         // Find unresolved bet for this market
         #[derive(sqlx::FromRow)]
         struct OpenBetRow {
@@ -1052,7 +1060,6 @@ impl PgPortfolio {
             BetSide::No => !yes_won,
         };
 
-        let fee_pct = 0.02;
         let gross_payout = if bet_won { shares } else { 0.0 };
         let exit_fee = gross_payout * fee_pct;
         let net_payout = gross_payout - exit_fee;
@@ -1145,6 +1152,7 @@ impl PgPortfolio {
         bet_id: i32,
         current_yes_price: f64,
         reason: &str,
+        fee_pct: f64,
     ) -> Result<Option<ResolvedBet>> {
         #[derive(sqlx::FromRow)]
         struct OpenBetRow {
@@ -1185,7 +1193,6 @@ impl PgPortfolio {
             BetSide::Yes => current_yes_price,
             BetSide::No => 1.0 - current_yes_price,
         };
-        let fee_pct = 0.02;
         let gross_payout = r.shares * sell_price;
         let exit_fee = gross_payout * fee_pct;
         let net_payout = gross_payout - exit_fee;

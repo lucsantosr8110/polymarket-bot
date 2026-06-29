@@ -249,6 +249,7 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
     let hk_interval = cfg.scan_interval_mins;
     let hk_stop_loss = cfg.stop_loss_pct;
     let hk_exit_days = cfg.exit_days_before_expiry;
+    let hk_fee_pct = cfg.fee_pct;
     // Alert if model age exceeds retrain interval + 60 min buffer for the retrain itself
     let hk_retrain_max_secs = (cfg.retrain_interval_hours * 3600 + 60 * 60) as f64;
     let housekeeping = tokio::spawn(async move {
@@ -263,6 +264,7 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
                 &hk_scanner,
                 hk_stop_loss,
                 hk_exit_days,
+                hk_fee_pct,
             )
             .await
             {

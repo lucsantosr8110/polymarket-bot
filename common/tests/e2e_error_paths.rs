@@ -211,7 +211,7 @@ async fn t2_settle_loss_debits_no_payout() {
     let bankroll_after_place = seeded_bankroll - (cost + fee); // 989.8
 
     let resolved_bet = portfolio
-        .resolve_bet(&market_id, false) // side=Yes, yes_won=false => bet lost
+        .resolve_bet(&market_id, false, 0.02) // side=Yes, yes_won=false => bet lost
         .await
         .expect("resolve_bet ok")
         .expect("must find the open bet");
@@ -263,7 +263,7 @@ async fn t3_resolve_bet_is_idempotent() {
     portfolio.place_bet(&bet).await.expect("place_bet ok");
 
     let first = portfolio
-        .resolve_bet(&market_id, true)
+        .resolve_bet(&market_id, true, 0.02)
         .await
         .expect("first resolve ok")
         .expect("must resolve the open bet");
@@ -288,7 +288,7 @@ async fn t3_resolve_bet_is_idempotent() {
     // Second resolve on the same (already-resolved) market must be a no-op:
     // the lookup query filters `resolved = false`, so it finds nothing.
     let second = portfolio
-        .resolve_bet(&market_id, true)
+        .resolve_bet(&market_id, true, 0.02)
         .await
         .expect("second resolve call must not error");
     assert!(

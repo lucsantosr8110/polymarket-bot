@@ -120,7 +120,7 @@ pub async fn copy_trade_cycle(
                 );
 
                 match portfolio
-                    .early_exit(bet.id, current_yes_price, &reason)
+                    .early_exit(bet.id, current_yes_price, &reason, cfg.fee_pct)
                     .await
                 {
                     Ok(Some(r)) => {
