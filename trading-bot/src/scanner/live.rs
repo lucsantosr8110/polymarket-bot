@@ -36,7 +36,7 @@ const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// Read the OpenRouter API key. Prefers `OPENROUTER_API_KEY`; falls back to
 /// the legacy `OPENAI_API_KEY` name so existing `.env` files keep working.
-fn openrouter_api_key() -> Result<String> {
+pub(crate) fn openrouter_api_key() -> Result<String> {
     std::env::var("OPENROUTER_API_KEY")
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
         .context("OPENROUTER_API_KEY (or legacy OPENAI_API_KEY) not set")
@@ -323,14 +323,19 @@ pub struct LiveScanner {
 impl LiveScanner {
     pub async fn new(cfg: &Arc<AppConfig>, pool: PgPool) -> Result<Self> {
         let http = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(cfg.http_timeout_secs))
             .build()
             .expect("failed to build HTTP client");
         let calibration = CalibrationCurve::load(&pool, cfg.calibration_min_samples).await?;
 
         // ML model sidecar (full ensemble) — required
         let sidecar = if !cfg.model_sidecar_url.is_empty() {
-            let client = SidecarClient::new(&cfg.model_sidecar_url);
+            let client = SidecarClient::new(
+                &cfg.model_sidecar_url,
+                Duration::from_secs(cfg.sidecar_timeout_secs),
+                cfg.sidecar_max_retries,
+                Duration::from_secs(cfg.sidecar_retry_delay_secs),
+            );
             if client.is_healthy().await {
                 tracing::info!(url = %cfg.model_sidecar_url, "ML sidecar connected (full ensemble)");
             } else {

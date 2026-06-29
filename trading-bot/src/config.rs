@@ -200,6 +200,55 @@ pub struct AppConfig {
     #[config(env = "MODEL_SIDECAR_URL", default = "")]
     pub model_sidecar_url: String,
 
+    /// HTTP client timeout (seconds) for sidecar requests.
+    #[config(env = "SIDECAR_TIMEOUT_SECS", default = 10)]
+    pub sidecar_timeout_secs: u64,
+
+    /// Max retry attempts for sidecar predict/predict_batch calls.
+    #[config(env = "SIDECAR_MAX_RETRIES", default = 3)]
+    pub sidecar_max_retries: usize,
+
+    /// Delay (seconds) between sidecar retry attempts.
+    #[config(env = "SIDECAR_RETRY_DELAY_SECS", default = 2)]
+    pub sidecar_retry_delay_secs: u64,
+
+    /// HTTP client timeout (seconds) for the main scanner client (Gamma/CLOB calls).
+    #[config(env = "HTTP_TIMEOUT_SECS", default = 30)]
+    pub http_timeout_secs: u64,
+
+    /// HTTP client timeout (seconds) for news/RSS + embedding requests.
+    #[config(env = "NEWS_FETCH_TIMEOUT_SECS", default = 15)]
+    pub news_fetch_timeout_secs: u64,
+
+    // --- WS alert loop (cycles/alerts.rs) ---
+    /// Don't re-assess the same market within this many minutes of a WS alert.
+    #[config(env = "ALERT_THROTTLE_MINS", default = 15)]
+    pub alert_throttle_mins: u64,
+
+    /// Global cooldown (seconds) between any two WS-triggered bets.
+    #[config(env = "WS_BET_COOLDOWN_SECS", default = 600)]
+    pub ws_bet_cooldown_secs: u64,
+
+    /// Cooldown (seconds) between price-move notifications for the same open bet.
+    #[config(env = "PRICE_ALERT_COOLDOWN_SECS", default = 3600)]
+    pub price_alert_cooldown_secs: u64,
+
+    /// Max WS-triggered bets per day.
+    #[config(env = "MAX_WS_BETS_PER_DAY", default = 3)]
+    pub max_ws_bets_per_day: usize,
+
+    /// Delay (seconds) before reconnecting after a WS disconnect.
+    #[config(env = "WS_RECONNECT_DELAY_SECS", default = 5)]
+    pub ws_reconnect_delay_secs: u64,
+
+    /// Minimum price move (fraction) to trigger a WS activity alert.
+    #[config(env = "WS_MIN_PRICE_DELTA", default = 0.03)]
+    pub ws_min_price_delta: f64,
+
+    /// Minimum trade size (USD) to trigger a WS activity alert.
+    #[config(env = "WS_MIN_TRADE_USD", default = 500.0)]
+    pub ws_min_trade_usd: f64,
+
     /// Port for the Prometheus metrics HTTP endpoint.
     #[config(env = "METRICS_PORT", default = 9000)]
     pub metrics_port: u16,
@@ -289,6 +338,18 @@ impl AppConfig {
             min_kelly_size: 0.02,
             min_bet_price: 0.15,
             model_sidecar_url: String::new(),
+            sidecar_timeout_secs: 10,
+            sidecar_max_retries: 3,
+            sidecar_retry_delay_secs: 2,
+            http_timeout_secs: 30,
+            news_fetch_timeout_secs: 15,
+            alert_throttle_mins: 15,
+            ws_bet_cooldown_secs: 600,
+            price_alert_cooldown_secs: 3600,
+            max_ws_bets_per_day: 3,
+            ws_reconnect_delay_secs: 5,
+            ws_min_price_delta: 0.03,
+            ws_min_trade_usd: 500.0,
             metrics_port: 9000,
             openrouter_http_referer: String::new(),
             openrouter_app_title: String::new(),

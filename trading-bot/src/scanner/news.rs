@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::config::AppConfig;
 use crate::data::models::GammaMarket;
 
+use super::live::openrouter_api_key;
 use super::openrouter::openrouter_attribution_headers;
 
 /// A news item from any source.
@@ -40,17 +41,17 @@ pub struct NewsAggregator {
     http: Client,
     openai_api_key: Option<String>,
     attribution_headers: Vec<(&'static str, String)>,
+    fetch_timeout: Duration,
 }
 
 impl NewsAggregator {
     pub fn new(http: Client, cfg: &AppConfig) -> Self {
-        let openai_api_key = std::env::var("OPENROUTER_API_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .ok();
+        let openai_api_key = openrouter_api_key().ok();
         Self {
             http,
             openai_api_key,
             attribution_headers: openrouter_attribution_headers(cfg),
+            fetch_timeout: Duration::from_secs(cfg.news_fetch_timeout_secs),
         }
     }
 
@@ -120,7 +121,7 @@ impl NewsAggregator {
 
     /// Fetch an RSS feed with retry. Source tag is applied to all items.
     async fn fetch_rss(&self, url: &str, source: &str) -> Result<Vec<NewsItem>> {
-        let text = fetch_with_retry(&self.http, url, "Mozilla/5.0").await?;
+        let text = fetch_with_retry(&self.http, url, "Mozilla/5.0", self.fetch_timeout).await?;
 
         let mut items = Vec::new();
         for item_block in text.split("<item>").skip(1) {
@@ -361,7 +362,12 @@ fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 // --- HTTP helpers ---
 
 /// Fetch URL with up to 3 retries and exponential backoff.
-async fn fetch_with_retry(http: &Client, url: &str, user_agent: &str) -> Result<String> {
+async fn fetch_with_retry(
+    http: &Client,
+    url: &str,
+    user_agent: &str,
+    timeout: Duration,
+) -> Result<String> {
     let mut last_err = None;
 
     for attempt in 0..3 {
@@ -373,7 +379,7 @@ async fn fetch_with_retry(http: &Client, url: &str, user_agent: &str) -> Result<
         match http
             .get(url)
             .header("User-Agent", user_agent)
-            .timeout(Duration::from_secs(15))
+            .timeout(timeout)
             .send()
             .await
         {

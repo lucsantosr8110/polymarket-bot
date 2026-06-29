@@ -412,8 +412,10 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
     let token_map: Arc<RwLock<HashMap<String, String>>> = Arc::new(RwLock::new(HashMap::new()));
 
     let ws_watcher = Arc::new(MarketWatcher::new(
-        alert_tx, 0.03,  // 3% price move triggers alert
-        500.0, // $500+ trade triggers alert
+        alert_tx,
+        cfg.ws_min_price_delta,
+        cfg.ws_min_trade_usd,
+        Duration::from_secs(cfg.ws_reconnect_delay_secs),
     ));
 
     // Spawn websocket connection

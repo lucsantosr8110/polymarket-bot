@@ -24,15 +24,17 @@ pub async fn alert_loop(
     cfg: Arc<AppConfig>,
     token_map: Arc<RwLock<HashMap<String, String>>>,
 ) {
-    // Throttle: don't re-assess same market within 15 minutes
+    // Throttle: don't re-assess same market within `alert_throttle_mins`
+    let alert_throttle = Duration::from_secs(cfg.alert_throttle_mins * 60);
     let mut last_assessed: HashMap<String, std::time::Instant> = HashMap::new();
-    // Global WS cooldown: max 1 WS-triggered bet per 10 minutes
-    let mut last_ws_bet = std::time::Instant::now() - Duration::from_secs(600);
+    // Global WS cooldown: max 1 WS-triggered bet per `ws_bet_cooldown_secs`
+    let ws_bet_cooldown = Duration::from_secs(cfg.ws_bet_cooldown_secs);
+    let mut last_ws_bet = std::time::Instant::now() - ws_bet_cooldown;
     // Max WS bets per day
     let mut ws_bets_today: usize = 0;
     let mut ws_bets_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    const MAX_WS_BETS_PER_DAY: usize = 3;
-    // Cooldown for open-bet price move notifications (1h per market)
+    // Cooldown for open-bet price move notifications (per market)
+    let price_alert_cooldown = Duration::from_secs(cfg.price_alert_cooldown_secs);
     let mut last_price_alert: HashMap<String, std::time::Instant> = HashMap::new();
 
     while let Some(alert) = alert_rx.recv().await {
@@ -42,7 +44,7 @@ pub async fn alert_loop(
             ws_bets_today = 0;
             ws_bets_date = today;
         }
-        if ws_bets_today >= MAX_WS_BETS_PER_DAY {
+        if ws_bets_today >= cfg.max_ws_bets_per_day {
             continue;
         }
 
@@ -56,12 +58,12 @@ pub async fn alert_loop(
         // Per-market throttle: 15 minutes
         let now = std::time::Instant::now();
         if let Some(last) = last_assessed.get(&market_id)
-            && now.duration_since(*last) < Duration::from_secs(900)
+            && now.duration_since(*last) < alert_throttle
         {
             continue;
         }
-        // Global cooldown: 10 minutes between any WS bets
-        if now.duration_since(last_ws_bet) < Duration::from_secs(600) {
+        // Global cooldown between any WS bets
+        if now.duration_since(last_ws_bet) < ws_bet_cooldown {
             continue;
         }
         last_assessed.insert(market_id.clone(), now);
@@ -76,7 +78,7 @@ pub async fn alert_loop(
                 continue;
             }
             if let Some(last) = last_price_alert.get(&market_id)
-                && now.duration_since(*last) < Duration::from_secs(3600)
+                && now.duration_since(*last) < price_alert_cooldown
             {
                 continue;
             }

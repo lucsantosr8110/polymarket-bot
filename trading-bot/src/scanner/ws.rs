@@ -8,7 +8,6 @@ use tokio_tungstenite::tungstenite::Message;
 
 const WS_URL: &str = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
 const PING_INTERVAL: Duration = Duration::from_secs(10);
-const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 /// Max token IDs per subscription (API limit / performance).
 const MAX_SUBSCRIPTIONS: usize = 200;
@@ -87,6 +86,7 @@ pub struct MarketWatcher {
     pub tokens: Arc<RwLock<Vec<String>>>,
     min_price_delta: f64,
     min_trade_usd: f64,
+    reconnect_delay: Duration,
 }
 
 impl MarketWatcher {
@@ -94,12 +94,14 @@ impl MarketWatcher {
         alert_tx: mpsc::Sender<ActivityAlert>,
         min_price_delta: f64,
         min_trade_usd: f64,
+        reconnect_delay: Duration,
     ) -> Self {
         Self {
             alert_tx,
             tokens: Arc::new(RwLock::new(Vec::new())),
             min_price_delta,
             min_trade_usd,
+            reconnect_delay,
         }
     }
 
@@ -127,7 +129,7 @@ impl MarketWatcher {
                 }
             }
 
-            tokio::time::sleep(RECONNECT_DELAY).await;
+            tokio::time::sleep(self.reconnect_delay).await;
         }
     }
 

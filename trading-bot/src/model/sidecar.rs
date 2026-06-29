@@ -7,14 +7,13 @@ use std::time::Duration;
 
 use crate::model::features::MarketFeatures;
 
-const MAX_RETRIES: usize = 3;
-const RETRY_DELAY: Duration = Duration::from_secs(2);
-
 /// HTTP client for the Python ML sidecar (full stacking ensemble).
 #[derive(Debug, Clone)]
 pub struct SidecarClient {
     client: Client,
     base_url: String,
+    max_retries: usize,
+    retry_delay: Duration,
 }
 
 #[derive(Serialize, Clone)]
@@ -46,14 +45,21 @@ pub struct HealthResponse {
 }
 
 impl SidecarClient {
-    pub fn new(base_url: &str) -> Self {
+    pub fn new(
+        base_url: &str,
+        timeout: Duration,
+        max_retries: usize,
+        retry_delay: Duration,
+    ) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(timeout)
             .build()
             .expect("failed to build sidecar HTTP client");
         Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
+            max_retries,
+            retry_delay,
         }
     }
 
@@ -88,9 +94,9 @@ impl SidecarClient {
         };
 
         let mut last_err = None;
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..self.max_retries {
             if attempt > 0 {
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(self.retry_delay).await;
             }
             match self.do_predict(&req).await {
                 Ok(pred) => return Ok(pred),
@@ -136,9 +142,9 @@ impl SidecarClient {
         };
 
         let mut last_err = None;
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..self.max_retries {
             if attempt > 0 {
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(self.retry_delay).await;
             }
             match self.do_predict_batch(&req).await {
                 Ok(preds) => return Ok(preds),
