@@ -1,4 +1,4 @@
-import { Flame, ShieldAlert, Save, SlidersHorizontal, TrendingUp } from 'lucide-react'
+import { AlertTriangle, Flame, ShieldAlert, Save, SlidersHorizontal, TrendingUp } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useState } from 'react'
 import type { GlobalConfig as GlobalConfigType } from '../../types'
@@ -17,6 +17,26 @@ type NumericField = {
   step: number
   suffix?: string
 }
+
+// Fields the Rust bot applies live via runtime-config polling (RuntimeGlobals).
+// Anything not in this set is persisted but only takes effect after a bot restart.
+const LIVE_RELOADABLE_FIELDS = new Set<string>([
+  'scan_interval_mins',
+  'bet_scan_interval_mins',
+  'heartbeat_interval_mins',
+  'config_poll_interval_secs',
+  'slippage_pct',
+  'stop_loss_pct',
+  'exit_days_before_expiry',
+  'min_kelly_size',
+  'min_bet_price',
+  'max_ws_bets_per_day',
+  'alert_throttle_mins',
+  'ws_bet_cooldown_secs',
+  'price_alert_cooldown_secs'
+])
+
+const isLiveReloadable = (key: string) => LIVE_RELOADABLE_FIELDS.has(key)
 
 const operationalFields: NumericField[] = [
   { key: 'scan_interval_mins', label: 'Housekeeping interval', min: 1, step: 1, suffix: 'min' },
@@ -116,7 +136,10 @@ export function GlobalConfig({ config, saving, onSave }: GlobalConfigProps) {
           ))}
 
           <label className="grid gap-2 text-sm text-cyber-muted md:col-span-2">
-            model_sidecar_url
+            <span className="flex items-center gap-2">
+              model_sidecar_url
+              <RestartRequiredBadge />
+            </span>
             <input
               type="url"
               value={String(form.model_sidecar_url ?? '')}
@@ -126,7 +149,10 @@ export function GlobalConfig({ config, saving, onSave }: GlobalConfigProps) {
           </label>
 
           <label className="flex items-center justify-between gap-4 rounded-md border border-cyber-border bg-black/20 px-4 py-3 text-sm text-cyber-muted">
-            news_enabled
+            <span className="flex items-center gap-2">
+              news_enabled
+              <RestartRequiredBadge />
+            </span>
             <input
               type="checkbox"
               checked={Boolean(form.news_enabled)}
@@ -242,7 +268,10 @@ function NumberField({
   return (
     <label className="grid gap-2 text-sm text-cyber-muted">
       <span className="flex items-center justify-between gap-3">
-        {field.label}
+        <span className="flex items-center gap-2">
+          {field.label}
+          {isLiveReloadable(field.key) ? null : <RestartRequiredBadge />}
+        </span>
         {field.suffix ? <span className="text-xs text-cyber-cyan">{field.suffix}</span> : null}
       </span>
       <input
@@ -255,6 +284,18 @@ function NumberField({
         className="cyber-input px-3 py-3"
       />
     </label>
+  )
+}
+
+function RestartRequiredBadge() {
+  return (
+    <span
+      title="Not live-reloadable — takes effect only after a bot restart"
+      className="inline-flex items-center gap-1 rounded border border-cyber-yellow/40 bg-cyber-yellow/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-cyber-yellow"
+    >
+      <AlertTriangle size={11} />
+      Restart
+    </span>
   )
 }
 
