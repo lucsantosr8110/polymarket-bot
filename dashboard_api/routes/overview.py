@@ -1,16 +1,46 @@
+import os
+from datetime import datetime, timezone
 from typing import Annotated
 
 import asyncpg
+import httpx
 from fastapi import APIRouter, Depends
 
-from dashboard_api.db import get_pool
+from dashboard_api.db import get_http_client, get_pool
 from dashboard_api.models import OverviewResponse
 
 router = APIRouter(prefix="/api", tags=["overview"])
 
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9090")
+
+
+async def _last_bet_scan_at(client: httpx.AsyncClient) -> datetime | None:
+    """Wall-clock time of the last completed bet_scan cycle, signal or not.
+
+    Sourced from Prometheus (bot_operation_duration_seconds_count{operation=
+    "bet_scan"}, incremented every cycle) rather than rejected_signals.MAX
+    (created_at) — that SQL fallback only moves when a candidate market is
+    found, so on a quiet cycle (signals_today=0, common with a tight
+    bet_scan_interval_mins) it looks stuck even though the bot is scanning
+    on schedule.
+    """
+    query = 'timestamp(bot_operation_duration_seconds_count{operation="bet_scan",step="full_cycle"})'
+    try:
+        resp = await client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
+        resp.raise_for_status()
+        result = resp.json().get("data", {}).get("result")
+        if not result:
+            return None
+        return datetime.fromtimestamp(float(result[0]["value"][1]), tz=timezone.utc)
+    except Exception:
+        return None
+
 
 @router.get("/overview", response_model=OverviewResponse)
-async def overview(pool: Annotated[asyncpg.Pool | None, Depends(get_pool)]) -> OverviewResponse:
+async def overview(
+    pool: Annotated[asyncpg.Pool | None, Depends(get_pool)],
+    client: Annotated[httpx.AsyncClient, Depends(get_http_client)],
+) -> OverviewResponse:
     if pool is None:
         return _empty_overview()
 
@@ -37,7 +67,12 @@ async def overview(pool: Annotated[asyncpg.Pool | None, Depends(get_pool)]) -> O
         """
     )
 
-    return OverviewResponse(**dict(row))
+    data = dict(row)
+    last_bet_scan_at = await _last_bet_scan_at(client)
+    if last_bet_scan_at is not None:
+        data["last_scan"] = last_bet_scan_at
+
+    return OverviewResponse(**data)
 
 
 def _empty_overview() -> OverviewResponse:
