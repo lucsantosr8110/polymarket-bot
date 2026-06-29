@@ -51,8 +51,10 @@ services:
       DATABASE_URL: postgres://bot:bot@postgres:5432/polymarket
       MODEL_SIDECAR_URL: http://model-server:8000
       METRICS_PORT: "9000"
+      BOT_LOG_FILE: /app/logs/bot.log
     volumes:
       - model:/app/model
+      - botlogs:/app/logs
     ports:
       - "9000:9000"
     stop_grace_period: 15s
@@ -73,6 +75,41 @@ services:
       - "9001:9001"
     stop_grace_period: 15s
     restart: unless-stopped
+
+  dashboard-api:
+    build:
+      context: ./dashboard_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://bot:bot@postgres:5432/polymarket
+      CONFIG_POLL_INTERVAL_SECS: "60"
+      BOT_LOG_FILE: /app/logs/bot.log
+    volumes:
+      - botlogs:/app/logs:ro
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard-ui:
+    build:
+      context: ./dashboard-ui
+    depends_on:
+      - dashboard-api
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   prometheus:
     image: prom/prometheus:latest
@@ -105,5 +142,6 @@ services:
 volumes:
   pgdata:
   model:
+  botlogs:
   prometheus_data:
   grafana_data:
