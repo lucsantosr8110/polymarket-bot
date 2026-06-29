@@ -12,10 +12,15 @@ use crate::strategy::StrategyProfile;
 #[derive(Debug, Clone, Deserialize)]
 pub struct RuntimeStrategyConfig {
     pub name: String,
+    #[serde(default)]
     pub min_edge: f64,
+    #[serde(default)]
     pub min_confidence: f64,
+    #[serde(default)]
     pub kelly_fraction: f64,
+    #[serde(default)]
     pub max_signals_per_day: usize,
+    #[serde(default)]
     pub min_bet: f64,
 }
 
@@ -317,6 +322,20 @@ mod tests {
         assert_eq!(profile.kelly_fraction, 0.20);
         assert_eq!(profile.max_signals_per_day, 4);
         assert_eq!(profile.min_bet, 7.5);
+    }
+
+    #[test]
+    fn strategy_with_missing_field_uses_default() {
+        // A single missing field must not break the whole strategy array reload.
+        let json = serde_json::json!({
+            "name": "Balanced",
+            "min_edge": 0.07,
+            "kelly_fraction": 0.20,
+            "max_signals_per_day": 4,
+            "min_bet": 7.5
+        });
+        let parsed: RuntimeStrategyConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.min_confidence, 0.0);
     }
 
     #[test]
