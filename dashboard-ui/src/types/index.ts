@@ -80,17 +80,27 @@ export type StrategyPatch = Partial<Omit<Strategy, 'name'>>
 // risk field is edited away from a preset.
 export type RiskProfile = 'conservative' | 'balanced' | 'aggressive' | 'custom'
 
+// Exactly the runtime-config fields the Rust bot live-reloads (RuntimeGlobals)
+// plus active_strategies and the dashboard risk_profile marker. Fields the bot
+// only reads from env at startup are intentionally absent — editing them here
+// would be a no-op. The index signature keeps the GET blob (which still carries
+// legacy keys) and dynamic form access type-safe.
 export type GlobalConfig = {
   scan_interval_mins?: number
   bet_scan_interval_mins?: number
   heartbeat_interval_mins?: number
   config_poll_interval_secs?: number
+  slippage_pct?: number
+  stop_loss_pct?: number
+  exit_days_before_expiry?: number
+  min_kelly_size?: number
+  min_bet_price?: number
+  max_ws_bets_per_day?: number
+  alert_throttle_mins?: number
+  ws_bet_cooldown_secs?: number
+  price_alert_cooldown_secs?: number
   active_strategies?: string[]
   risk_profile?: RiskProfile
-  model_sidecar_url?: string
-  news_enabled?: boolean
-  min_volume?: number
-  max_markets_fetch?: number
   [key: string]: string | number | boolean | string[] | undefined
 }
 

@@ -1,7 +1,7 @@
-import { AlertTriangle, Flame, ShieldAlert, Save, SlidersHorizontal, TrendingUp } from 'lucide-react'
+import { Clock, Flame, RadioTower, ShieldAlert, Save, SlidersHorizontal, TrendingUp } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useState } from 'react'
-import type { GlobalConfig as GlobalConfigType } from '../../types'
+import type { GlobalConfig as GlobalConfigType, RiskProfile } from '../../types'
 
 type GlobalConfigProps = {
   config: GlobalConfigType | null
@@ -18,63 +18,46 @@ type NumericField = {
   suffix?: string
 }
 
-// Fields the Rust bot applies live via runtime-config polling (RuntimeGlobals).
-// Anything not in this set is persisted but only takes effect after a bot restart.
-const LIVE_RELOADABLE_FIELDS = new Set<string>([
-  'scan_interval_mins',
-  'bet_scan_interval_mins',
-  'heartbeat_interval_mins',
-  'config_poll_interval_secs',
-  'slippage_pct',
-  'stop_loss_pct',
-  'exit_days_before_expiry',
-  'min_kelly_size',
-  'min_bet_price',
-  'max_ws_bets_per_day',
-  'alert_throttle_mins',
-  'ws_bet_cooldown_secs',
-  'price_alert_cooldown_secs'
-])
-
-const isLiveReloadable = (key: string) => LIVE_RELOADABLE_FIELDS.has(key)
-
-const operationalFields: NumericField[] = [
+// Every field below maps to a RuntimeGlobals member the Rust bot applies live
+// via runtime-config polling. Nothing here requires a restart, and no field is
+// shown that the bot would silently ignore.
+const intervalFields: NumericField[] = [
   { key: 'scan_interval_mins', label: 'Housekeeping interval', min: 1, step: 1, suffix: 'min' },
   { key: 'bet_scan_interval_mins', label: 'Bet scan interval', min: 1, step: 1, suffix: 'min' },
   { key: 'heartbeat_interval_mins', label: 'Heartbeat interval', min: 0, step: 1, suffix: 'min' },
-  { key: 'config_poll_interval_secs', label: 'Runtime config polling', min: 1, step: 5, suffix: 'sec' },
-  { key: 'min_volume', label: 'Minimum market volume', min: 0, step: 100, suffix: 'USD' },
-  { key: 'max_markets_fetch', label: 'Max markets fetched', min: 1, step: 50 }
+  { key: 'config_poll_interval_secs', label: 'Runtime config polling', min: 1, step: 5, suffix: 'sec' }
 ]
 
 const riskFields: NumericField[] = [
-  { key: 'strategy_bankroll', label: 'Stake bankroll per strategy', min: 0, step: 10, suffix: 'EUR' },
-  { key: 'kelly_fraction', label: 'Global Kelly fraction', min: 0, max: 1, step: 0.01 },
   { key: 'min_kelly_size', label: 'Minimum Kelly gate', min: 0, max: 1, step: 0.005 },
   { key: 'min_bet_price', label: 'Minimum entry price', min: 0, max: 1, step: 0.01 },
   { key: 'stop_loss_pct', label: 'Stop loss', min: 0, step: 0.05 },
-  { key: 'take_profit_pct', label: 'Take profit', min: 0, step: 0.05 },
   { key: 'exit_days_before_expiry', label: 'Exit days before expiry', min: 0, step: 1, suffix: 'days' },
-  { key: 'max_ws_bets_per_day', label: 'Max WS bets per day', min: 0, step: 1 },
-  { key: 'ws_bet_cooldown_secs', label: 'WS bet cooldown', min: 0, step: 30, suffix: 'sec' },
   { key: 'slippage_pct', label: 'Slippage assumption', min: 0, max: 1, step: 0.005 }
 ]
 
+const wsFields: NumericField[] = [
+  { key: 'max_ws_bets_per_day', label: 'Max WS bets per day', min: 0, step: 1 },
+  { key: 'ws_bet_cooldown_secs', label: 'WS bet cooldown', min: 0, step: 30, suffix: 'sec' },
+  { key: 'alert_throttle_mins', label: 'WS alert throttle', min: 0, step: 1, suffix: 'min' },
+  { key: 'price_alert_cooldown_secs', label: 'Price alert cooldown', min: 0, step: 60, suffix: 'sec' }
+]
+
 const defaultFormConfig: GlobalConfigType = {
-  config_poll_interval_secs: 60,
-  take_profit_pct: 0
+  config_poll_interval_secs: 60
 }
 
-const riskProfiles: Array<{ key: string; label: string; patch: GlobalConfigType }> = [
+// Presets only touch live-reloadable risk fields. Position sizing per strategy
+// (kelly_fraction, min_bet, ...) is tuned in the strategy editor, not here.
+const riskProfiles: Array<{ key: RiskProfile; label: string; patch: GlobalConfigType }> = [
   {
     key: 'conservative',
     label: 'Conservative',
     patch: {
       risk_profile: 'conservative',
-      kelly_fraction: 0.15,
       min_kelly_size: 0.03,
+      min_bet_price: 0.2,
       stop_loss_pct: 0.25,
-      take_profit_pct: 0.75,
       max_ws_bets_per_day: 2,
       ws_bet_cooldown_secs: 900,
       slippage_pct: 0.005
@@ -85,10 +68,9 @@ const riskProfiles: Array<{ key: string; label: string; patch: GlobalConfigType 
     label: 'Balanced',
     patch: {
       risk_profile: 'balanced',
-      kelly_fraction: 0.25,
       min_kelly_size: 0.02,
+      min_bet_price: 0.15,
       stop_loss_pct: 0.5,
-      take_profit_pct: 1,
       max_ws_bets_per_day: 3,
       ws_bet_cooldown_secs: 600,
       slippage_pct: 0.01
@@ -99,10 +81,9 @@ const riskProfiles: Array<{ key: string; label: string; patch: GlobalConfigType 
     label: 'Aggressive',
     patch: {
       risk_profile: 'aggressive',
-      kelly_fraction: 0.5,
       min_kelly_size: 0.01,
+      min_bet_price: 0.1,
       stop_loss_pct: 0.75,
-      take_profit_pct: 1.5,
       max_ws_bets_per_day: 6,
       ws_bet_cooldown_secs: 300,
       slippage_pct: 0.015
@@ -128,43 +109,17 @@ export function GlobalConfig({ config, saving, onSave }: GlobalConfigProps) {
   return (
     <form onSubmit={submit} className="grid gap-4">
       <section className="cyber-card p-4">
-        <SectionHeader icon={SlidersHorizontal} title="Global Runtime Config" subtitle="Saved to FastAPI runtime_config" />
+        <SectionHeader icon={Clock} title="Loop Intervals" subtitle="Scan cadence — live-reloaded via runtime-config polling" />
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {operationalFields.map((field) => (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {intervalFields.map((field) => (
             <NumberField key={field.key} field={field} value={Number(form[field.key] ?? 0)} onChange={(value) => setField(field.key, value)} />
           ))}
-
-          <label className="grid gap-2 text-sm text-cyber-muted md:col-span-2">
-            <span className="flex items-center gap-2">
-              model_sidecar_url
-              <RestartRequiredBadge />
-            </span>
-            <input
-              type="url"
-              value={String(form.model_sidecar_url ?? '')}
-              onChange={(event) => setForm((current) => ({ ...current, model_sidecar_url: event.target.value }))}
-              className="cyber-input px-3 py-3"
-            />
-          </label>
-
-          <label className="flex items-center justify-between gap-4 rounded-md border border-cyber-border bg-black/20 px-4 py-3 text-sm text-cyber-muted">
-            <span className="flex items-center gap-2">
-              news_enabled
-              <RestartRequiredBadge />
-            </span>
-            <input
-              type="checkbox"
-              checked={Boolean(form.news_enabled)}
-              onChange={(event) => setForm((current) => ({ ...current, news_enabled: event.target.checked }))}
-              className="h-5 w-5 accent-cyber-cyan"
-            />
-          </label>
         </div>
       </section>
 
       <section className="cyber-card p-4">
-        <SectionHeader icon={ShieldAlert} title="Financial Risk Controls" subtitle="Position sizing, early exit, and exposure guardrails" />
+        <SectionHeader icon={ShieldAlert} title="Risk & Sizing Gates" subtitle="Entry gates, stop loss, and early exit" />
 
         <div className="mb-4 grid gap-2 md:grid-cols-3">
           {riskProfiles.map((profile) => {
@@ -190,8 +145,8 @@ export function GlobalConfig({ config, saving, onSave }: GlobalConfigProps) {
 
         <div className="mb-4 grid gap-3 md:grid-cols-3">
           <RiskReadout label="Stop loss" value={riskDisplay('stop_loss_pct')} tone="red" />
-          <RiskReadout label="Take profit" value={riskDisplay('take_profit_pct')} tone="green" />
-          <RiskReadout label="Stake bankroll" value={`${Number(form.strategy_bankroll ?? 0).toFixed(2)} EUR`} tone="cyan" />
+          <RiskReadout label="Min Kelly gate" value={riskDisplay('min_kelly_size')} tone="green" />
+          <RiskReadout label="Min entry price" value={riskDisplay('min_bet_price')} tone="cyan" />
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -200,12 +155,23 @@ export function GlobalConfig({ config, saving, onSave }: GlobalConfigProps) {
           ))}
         </div>
 
-        <div className="mt-4 rounded-md border border-cyber-yellow/30 bg-cyber-yellow/10 p-3 text-sm text-cyber-yellow">
-          `take_profit_pct` and global `kelly_fraction` are dashboard compatibility fields; live Kelly sizing is controlled per strategy.
+        <div className="mt-4 rounded-md border border-cyber-cyan/30 bg-cyber-cyan/10 p-3 text-sm text-cyber-cyan">
+          Per-strategy sizing (Kelly fraction, min edge, min bet) is tuned in the Strategies tab. Model, news, and fee
+          settings are environment-only and live in the bot's <code>.env</code>.
         </div>
       </section>
 
-      <div className="mt-6 flex justify-end">
+      <section className="cyber-card p-4">
+        <SectionHeader icon={RadioTower} title="WebSocket Alerts" subtitle="Live-trade alert throttling and exposure caps" />
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {wsFields.map((field) => (
+            <NumberField key={field.key} field={field} value={Number(form[field.key] ?? 0)} onChange={(value) => setField(field.key, value)} />
+          ))}
+        </div>
+      </section>
+
+      <div className="mt-2 flex justify-end">
         <button
           type="submit"
           disabled={saving}
@@ -268,10 +234,7 @@ function NumberField({
   return (
     <label className="grid gap-2 text-sm text-cyber-muted">
       <span className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2">
-          {field.label}
-          {isLiveReloadable(field.key) ? null : <RestartRequiredBadge />}
-        </span>
+        {field.label}
         {field.suffix ? <span className="text-xs text-cyber-cyan">{field.suffix}</span> : null}
       </span>
       <input
@@ -284,18 +247,6 @@ function NumberField({
         className="cyber-input px-3 py-3"
       />
     </label>
-  )
-}
-
-function RestartRequiredBadge() {
-  return (
-    <span
-      title="Not live-reloadable — takes effect only after a bot restart"
-      className="inline-flex items-center gap-1 rounded border border-cyber-yellow/40 bg-cyber-yellow/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-cyber-yellow"
-    >
-      <AlertTriangle size={11} />
-      Restart
-    </span>
   )
 }
 
