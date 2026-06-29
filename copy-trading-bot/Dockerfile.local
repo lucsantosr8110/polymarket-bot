@@ -1,0 +1,19 @@
+# Local build image for the copy-trading-bot (glibc/debian-slim), used when the
+# repo's migrations are newer than the public GHCR image. See
+# trading-bot/Dockerfile.local for the rationale.
+#
+# Build the binary first:  cargo build -p copy-trading-bot --release
+# Then:  docker build -f copy-trading-bot/Dockerfile.local -t ghcr.io/skharchikov/polymarket-bot-copy:latest .
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin bot
+
+COPY target/release/copy-trading-bot /bin/copy-trading-bot
+
+RUN mkdir -p /app && chown -R bot:bot /app
+
+USER bot:bot
+WORKDIR /app
+ENTRYPOINT ["/bin/copy-trading-bot"]

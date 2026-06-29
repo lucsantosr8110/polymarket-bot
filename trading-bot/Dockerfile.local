@@ -1,0 +1,19 @@
+# Local build image for hosts without access to the private GHCR bot image.
+# Uses a glibc (gnu) release binary on debian-slim (the canonical image is
+# musl/alpine, built in CI). TLS is rustls, so only ca-certificates are needed.
+#
+# Build the binary first:  cargo build -p trading-bot --release
+# Then:  docker build -f trading-bot/Dockerfile.local -t ghcr.io/skharchikov/polymarket-bot:latest .
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin bot
+
+COPY target/release/trading-bot /bin/trading-bot
+
+RUN mkdir -p /app/model /app/logs && chown -R bot:bot /app
+
+USER bot:bot
+WORKDIR /app
+ENTRYPOINT ["/bin/trading-bot"]
