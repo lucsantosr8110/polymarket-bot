@@ -958,19 +958,30 @@ impl PgPortfolio {
         let strat_bankroll_key = format!("bankroll:{}", bet.strategy);
         let strat_signals_key = format!("signals_sent_today:{}", bet.strategy);
         let total_deduction = bet.cost + bet.fee;
-        sqlx::query(
+        let r = sqlx::query(
             "UPDATE portfolio SET \
                value_f64 = CASE \
                  WHEN key = $1 THEN value_f64 - $2 \
                  WHEN key = $3 THEN value_f64 + 1 \
                END \
-             WHERE key IN ($1, $3)",
+             WHERE (key = $1 AND value_f64 >= $2) OR key = $3",
         )
         .bind(&strat_bankroll_key)
         .bind(total_deduction)
         .bind(&strat_signals_key)
         .execute(&mut *tx)
         .await?;
+
+        // Strict guard: exactly 2 rows must be affected (bankroll row only
+        // matches when funds are sufficient, signals row always matches)
+        if r.rows_affected() != 2 {
+            return Err(anyhow!(
+                "copy-bet portfolio update affected {} rows, expected 2 for strategy '{}' \
+                 (insufficient bankroll or missing keys)",
+                r.rows_affected(),
+                bet.strategy
+            ));
+        }
 
         tx.commit().await?;
         Ok(row.0)
