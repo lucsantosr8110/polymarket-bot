@@ -279,7 +279,10 @@ cargo run -p copy-trading-bot
 
 ### Trading Bot
 
-All settings via environment variables with sensible defaults:
+All settings via environment variables with sensible defaults. Trading fees
+are taken from each market's live `feeSchedule` (returned by the Gamma API);
+the `FEE_PCT_*` vars below are only the fallback used when a market has no
+schedule:
 
 | Variable | Default | Description |
 |---|---|---|
@@ -302,7 +305,12 @@ All settings via environment variables with sensible defaults:
 | `KELLY_FRACTION` | `0.25` | Global Kelly fraction |
 | `MIN_EFFECTIVE_EDGE` | `0.08` | Global min effective edge |
 | `SLIPPAGE_PCT` | `0.01` | Slippage assumption (1%) |
-| `FEE_PCT` | `0.02` | Trading fee (2%) |
+| `FEE_PCT_DEFAULT` | `0.0` | Fallback fee for markets with no category (e.g. geopolitics) |
+| `FEE_PCT_CRYPTO` | `0.018` | Fallback fee for Crypto-category markets |
+| `FEE_PCT_SPORTS` | `0.0075` | Fallback fee for Sports-category markets |
+| `FEE_PCT_POLITICS` | `0.01` | Fallback fee for Politics-category markets |
+| `FEE_PCT_FINANCE` | `0.01` | Fallback fee for Finance/Business/Economics-category markets |
+| `FEE_PCT_OTHER` | `0.0125` | Fallback fee for any other recognized category |
 | `STOP_LOSS_PCT` | `999.0` | Stop-loss threshold (999.0 = disabled) |
 | `EXIT_DAYS_BEFORE_EXPIRY` | `0` | Exit underwater positions N days before expiry (0 = disabled) |
 | `BLOCK_SPORTS` | `true` | Block sports/esports markets |
@@ -324,7 +332,12 @@ All settings via environment variables with sensible defaults:
 | `TELEGRAM_CHAT_ID` | *required* | Telegram chat ID |
 | `COPY_TRADE_INTERVAL_MINS` | `1` | Poll interval for new trades |
 | `SLIPPAGE_PCT` | `0.01` | Slippage assumption (1%) |
-| `FEE_PCT` | `0.02` | Trading fee (2%) |
+| `FEE_PCT_DEFAULT` | `0.0` | Fallback fee for markets with no category (shared with trading bot) |
+| `FEE_PCT_CRYPTO` | `0.018` | Fallback fee for Crypto-category markets |
+| `FEE_PCT_SPORTS` | `0.0075` | Fallback fee for Sports-category markets |
+| `FEE_PCT_POLITICS` | `0.01` | Fallback fee for Politics-category markets |
+| `FEE_PCT_FINANCE` | `0.01` | Fallback fee for Finance/Business/Economics-category markets |
+| `FEE_PCT_OTHER` | `0.0125` | Fallback fee for any other recognized category |
 | `METRICS_PORT` | `9001` | Prometheus metrics port |
 
 ## ML Model
