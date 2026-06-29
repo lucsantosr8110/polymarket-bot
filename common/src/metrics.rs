@@ -1,5 +1,5 @@
 use metrics::{counter, gauge, histogram};
-use metrics_exporter_prometheus::PrometheusBuilder;
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
 
 /// Install the Prometheus exporter, process collector, and tokio runtime
@@ -8,6 +8,18 @@ pub fn init(port: u16) {
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
 
     PrometheusBuilder::new()
+        // Without explicit buckets, histogram! renders as a client-side
+        // sliding-window summary whose quantiles decay to 0 between samples.
+        // That's wrong for low-frequency operations (bet_scan/housekeeping
+        // run every few minutes) — fixed buckets make this a real,
+        // non-decaying Prometheus histogram instead.
+        .set_buckets_for_metric(
+            Matcher::Full("bot_operation_duration_seconds".to_string()),
+            &[
+                0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
+            ],
+        )
+        .expect("invalid bucket config for bot_operation_duration_seconds")
         .with_http_listener(addr)
         .install()
         .expect("failed to install Prometheus exporter");
@@ -153,4 +165,18 @@ pub fn record_runtime_config_status(ok: bool, changed: bool) {
 /// Record a duration histogram for the given metric name.
 pub fn record_duration(name: &'static str, duration: std::time::Duration) {
     histogram!(name).record(duration.as_secs_f64());
+}
+
+/// Record the duration of a named operation/step as
+/// `bot_operation_duration_seconds{operation, step}`. Additive to the
+/// per-loop `bot_*_duration_seconds` histograms above — gives per-substep
+/// granularity (fetch_markets, predict_batch, place_bet, ...) for the
+/// dashboard's latency card.
+pub fn record_operation_duration(operation: &'static str, step: &'static str, duration_secs: f64) {
+    histogram!(
+        "bot_operation_duration_seconds",
+        "operation" => operation,
+        "step" => step,
+    )
+    .record(duration_secs);
 }
