@@ -13,15 +13,6 @@ use std::time::Duration;
 
 use crate::storage::postgres::{NewCopyTradeEvent, PgPortfolio};
 
-/// Trades older than this are skipped — price has likely moved too far.
-const STALE_TRADE_SECS: i64 = 300; // 5 minutes
-
-const DATA_API: &str = "https://data-api.polymarket.com";
-/// Default HTTP timeout for all data-API calls.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// Number of traders shown per period section in the inline leaderboard reply.
-const LEADERBOARD_SECTION_LIMIT: usize = 5;
-
 // ---------------------------------------------------------------------------
 // API response types
 // ---------------------------------------------------------------------------
@@ -122,11 +113,16 @@ pub struct LeaderboardDisplay {
 
 /// Fetch a trader's display name via the activity endpoint.
 /// Returns `None` if the request fails or the trader has no activity.
-pub async fn fetch_trader_username(http: &Client, wallet: &str) -> Option<String> {
-    let url = format!("{DATA_API}/activity?user={wallet}&type=TRADE&limit=1");
+pub async fn fetch_trader_username(
+    http: &Client,
+    wallet: &str,
+    data_api: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let url = format!("{data_api}/activity?user={wallet}&type=TRADE&limit=1");
     let resp: serde_json::Value = http
         .get(&url)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
         .ok()?
@@ -154,12 +150,15 @@ pub async fn fetch_trader_username(http: &Client, wallet: &str) -> Option<String
 pub async fn fetch_leaderboard(
     http: &Client,
     time_period: &str,
+    data_api: &str,
+    timeout: Duration,
+    section_limit: usize,
 ) -> Result<Vec<LeaderboardDisplay>> {
-    let url = format!("{DATA_API}/v1/leaderboard?timePeriod={time_period}&limit=10");
+    let url = format!("{data_api}/v1/leaderboard?timePeriod={time_period}&limit=10");
 
     let entries: Vec<LeaderboardEntry> = http
         .get(&url)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(timeout)
         .send()
         .await
         .context("leaderboard request failed")?
@@ -179,7 +178,7 @@ pub async fn fetch_leaderboard(
 
     let display = sorted
         .into_iter()
-        .take(LEADERBOARD_SECTION_LIMIT)
+        .take(section_limit)
         .enumerate()
         .map(|(i, e)| {
             let pnl = e.pnl_f64();
@@ -321,12 +320,25 @@ fn parse_activity_events(events: Vec<ActivityEvent>) -> Vec<TraderTrade> {
 /// the HTTP client.
 pub struct CopyTraderMonitor {
     http: Client,
+    data_api: String,
+    request_timeout: Duration,
+    stale_trade_secs: i64,
 }
 
 impl CopyTraderMonitor {
     /// Build a new monitor with a shared `reqwest::Client`.
-    pub fn new(http: Client) -> Self {
-        Self { http }
+    pub fn new(
+        http: Client,
+        data_api: String,
+        request_timeout: Duration,
+        stale_trade_secs: i64,
+    ) -> Self {
+        Self {
+            http,
+            data_api,
+            request_timeout,
+            stale_trade_secs,
+        }
     }
 
     /// Fetch recent trade activity for `wallet` since `since`.
@@ -339,12 +351,13 @@ impl CopyTraderMonitor {
         since: DateTime<Utc>,
     ) -> Result<Vec<TraderTrade>> {
         let since_ts = since.timestamp();
-        let url = format!("{DATA_API}/activity?user={wallet}&type=TRADE&startTs={since_ts}",);
+        let data_api = &self.data_api;
+        let url = format!("{data_api}/activity?user={wallet}&type=TRADE&startTs={since_ts}",);
 
         let events: Vec<ActivityEvent> = self
             .http
             .get(&url)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(self.request_timeout)
             .send()
             .await
             .context("activity request failed")?
@@ -430,7 +443,7 @@ impl CopyTraderMonitor {
             for trade in trades {
                 // Skip trades that are too old — market price has likely moved.
                 let age_secs = (now - trade.timestamp).num_seconds();
-                if age_secs > STALE_TRADE_SECS {
+                if age_secs > self.stale_trade_secs {
                     stale_count += 1;
                     continue;
                 }
@@ -622,9 +635,17 @@ mod tests {
     #[ignore] // hits real API
     async fn test_fetch_leaderboard_live() {
         let http = Client::new();
-        let entries = fetch_leaderboard(&http, "ALL").await.unwrap();
+        let entries = fetch_leaderboard(
+            &http,
+            "ALL",
+            "https://data-api.polymarket.com",
+            Duration::from_secs(15),
+            5,
+        )
+        .await
+        .unwrap();
         assert!(!entries.is_empty(), "leaderboard should have entries");
-        assert!(entries.len() <= LEADERBOARD_SECTION_LIMIT);
+        assert!(entries.len() <= 5);
         assert_eq!(entries[0].rank, 1);
         assert!(!entries[0].name.is_empty());
         assert!(entries[0].pnl > 0.0);
@@ -637,7 +658,12 @@ mod tests {
     #[tokio::test]
     #[ignore] // hits real API
     async fn test_poll_trader_activity_live() {
-        let monitor = CopyTraderMonitor::new(Client::new());
+        let monitor = CopyTraderMonitor::new(
+            Client::new(),
+            "https://data-api.polymarket.com".to_string(),
+            Duration::from_secs(15),
+            300,
+        );
         // Top leaderboard trader from 2026-03-15
         let wallet = "0x37c1874a60d348903594a96703e0507c518fc53a";
         let since = chrono::Utc::now() - chrono::Duration::hours(24);

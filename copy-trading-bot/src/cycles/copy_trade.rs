@@ -12,15 +12,6 @@ use crate::storage::portfolio::{BetSide, CopyRef, NewBet};
 use crate::storage::postgres::PgPortfolio;
 use crate::telegram::notifier::TelegramNotifier;
 
-/// Default bankroll for a newly followed trader.
-pub const COPY_TRADER_STARTING_BANKROLL: f64 = 1000.0;
-/// Kelly fraction multiplier (quarter-Kelly for safety).
-const KELLY_FRACTION: f64 = 0.25;
-/// Minimum bet size.
-const MIN_BET: f64 = 3.0;
-/// Maximum allowed price drift from trader's entry before skipping.
-const MAX_PRICE_DRIFT: f64 = 0.05; // 5 percentage points
-
 pub async fn copy_trade_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
@@ -38,14 +29,20 @@ pub async fn copy_trade_cycle(
     let skip_ids = portfolio.open_copy_bet_market_ids().await?;
     let skip_event_slugs = portfolio.open_bet_event_slugs().await?;
 
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
+    let request_timeout = std::time::Duration::from_secs(cfg.copy_request_timeout_secs);
+    let http = reqwest::Client::builder().timeout(request_timeout).build()?;
 
     // Backfill usernames for any traders that don't have one yet
     if let Ok(traders) = portfolio.get_active_traders().await {
         for trader in traders.iter().filter(|t| t.username.is_none()) {
-            if let Some(name) = fetch_trader_username(&http, &trader.proxy_wallet).await {
+            if let Some(name) = fetch_trader_username(
+                &http,
+                &trader.proxy_wallet,
+                &cfg.copy_data_api_url,
+                request_timeout,
+            )
+            .await
+            {
                 tracing::info!(wallet = %trader.proxy_wallet, username = %name, "Backfilled trader username");
                 let _ = portfolio
                     .update_trader_username(&trader.proxy_wallet, &name)
@@ -75,7 +72,7 @@ pub async fn copy_trade_cycle(
         // Mirror exits: if the trader sold a position we copied, exit ours too.
         if trade.side == "SELL" {
             // Resolve slug → Gamma numeric ID to match against bets table
-            let gamma_id = match fetch_market_by_slug(&http, &trade.slug).await {
+            let gamma_id = match fetch_market_by_slug(&http, &trade.slug, &cfg.copy_gamma_api_url).await {
                 Ok(m) => m.market_id,
                 Err(e) => {
                     tracing::warn!(slug = %trade.slug, err = %e, "Copy-exit: failed to resolve market slug");
@@ -89,7 +86,7 @@ pub async fn copy_trade_cycle(
 
             if let Some(bet) = matching {
                 let ids = [bet.market_id.as_str()];
-                let yes_price = fetch_yes_prices(&http, &ids)
+                let yes_price = fetch_yes_prices(&http, &ids, &cfg.copy_gamma_api_url)
                     .await
                     .into_iter()
                     .next()
@@ -173,7 +170,7 @@ pub async fn copy_trade_cycle(
         }
 
         // Fetch market data (resolves slug → Gamma numeric ID + events)
-        let market = match fetch_market_by_slug(&http, &trade.slug).await {
+        let market = match fetch_market_by_slug(&http, &trade.slug, &cfg.copy_gamma_api_url).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(slug = %trade.slug, err = %e, "Failed to fetch market for copy-trade");
@@ -202,7 +199,7 @@ pub async fn copy_trade_cycle(
         // Price drift check — skip if market has moved too far from trader's entry.
         let current_yes_price = {
             let ids = [market.market_id.as_str()];
-            fetch_yes_prices(&http, &ids)
+            fetch_yes_prices(&http, &ids, &cfg.copy_gamma_api_url)
                 .await
                 .into_iter()
                 .next()
@@ -210,7 +207,7 @@ pub async fn copy_trade_cycle(
         };
         if let Some(current) = current_yes_price {
             let drift = (current - trade.price).abs();
-            if drift > MAX_PRICE_DRIFT {
+            if drift > cfg.copy_max_price_drift {
                 tracing::info!(
                     market = %market.market_id,
                     trader_price = trade.price,
@@ -230,7 +227,7 @@ pub async fn copy_trade_cycle(
             bankroll = trader_bankroll,
             "Copy-trade bankroll check"
         );
-        if trader_bankroll < MIN_BET {
+        if trader_bankroll < cfg.copy_min_bet {
             tracing::info!(
                 trader = wallet_short,
                 bankroll = trader_bankroll,
@@ -244,7 +241,7 @@ pub async fn copy_trade_cycle(
         let estimated_prob = (entry_price + 0.05).min(0.95);
 
         // Kelly sizing
-        let kelly = fractional_kelly(estimated_prob, entry_price, KELLY_FRACTION);
+        let kelly = fractional_kelly(estimated_prob, entry_price, cfg.copy_kelly_fraction);
         if kelly <= 0.0 {
             tracing::info!(
                 trader = wallet_short,
@@ -256,7 +253,7 @@ pub async fn copy_trade_cycle(
         }
 
         let raw_bet = trader_bankroll * kelly;
-        if raw_bet < MIN_BET {
+        if raw_bet < cfg.copy_min_bet {
             tracing::info!(
                 trader = wallet_short,
                 kelly_bet = raw_bet,

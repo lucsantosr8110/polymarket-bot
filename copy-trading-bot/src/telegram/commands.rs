@@ -1,7 +1,6 @@
 //! Telegram command dispatch for the copy-trading bot.
 
 use crate::config::CopyTradingConfig;
-use crate::cycles::copy_trade::COPY_TRADER_STARTING_BANKROLL;
 use crate::scanner::copy_trader::{
     CopyTraderMonitor, fetch_leaderboard, fetch_trader_username, format_multi_leaderboard,
 };
@@ -19,7 +18,7 @@ pub async fn handle_command(
     notifier: &TelegramNotifier,
     _monitor: &CopyTraderMonitor,
     http: &reqwest::Client,
-    _cfg: &CopyTradingConfig,
+    cfg: &CopyTradingConfig,
 ) -> String {
     match cmd {
         "start" => {
@@ -58,10 +57,29 @@ pub async fn handle_command(
             }
         },
         "leaderboard" => {
+            let timeout = std::time::Duration::from_secs(cfg.copy_request_timeout_secs);
             let (day_res, month_res, all_res) = tokio::join!(
-                fetch_leaderboard(http, "DAY"),
-                fetch_leaderboard(http, "MONTH"),
-                fetch_leaderboard(http, "ALL"),
+                fetch_leaderboard(
+                    http,
+                    "DAY",
+                    &cfg.copy_data_api_url,
+                    timeout,
+                    cfg.copy_leaderboard_section_limit
+                ),
+                fetch_leaderboard(
+                    http,
+                    "MONTH",
+                    &cfg.copy_data_api_url,
+                    timeout,
+                    cfg.copy_leaderboard_section_limit
+                ),
+                fetch_leaderboard(
+                    http,
+                    "ALL",
+                    &cfg.copy_data_api_url,
+                    timeout,
+                    cfg.copy_leaderboard_section_limit
+                ),
             );
             match (day_res, month_res, all_res) {
                 (Ok(day), Ok(month), Ok(all)) => format_multi_leaderboard(&[
@@ -97,7 +115,7 @@ pub async fn handle_command(
                     if let Err(e) = portfolio
                         .ensure_key(
                             &format!("bankroll:{strat_key}"),
-                            COPY_TRADER_STARTING_BANKROLL,
+                            cfg.copy_starting_bankroll,
                         )
                         .await
                     {
@@ -106,13 +124,19 @@ pub async fn handle_command(
                     if let Err(e) = portfolio
                         .ensure_key(
                             &format!("starting_bankroll:{strat_key}"),
-                            COPY_TRADER_STARTING_BANKROLL,
+                            cfg.copy_starting_bankroll,
                         )
                         .await
                     {
                         tracing::warn!(err = %e, "Failed to init copy trader starting bankroll");
                     }
-                    let username = fetch_trader_username(http, &wallet).await;
+                    let username = fetch_trader_username(
+                        http,
+                        &wallet,
+                        &cfg.copy_data_api_url,
+                        std::time::Duration::from_secs(cfg.copy_request_timeout_secs),
+                    )
+                    .await;
                     let display = username.as_deref().unwrap_or(short);
                     match portfolio
                         .add_followed_trader(
@@ -127,7 +151,7 @@ pub async fn handle_command(
                     {
                         Ok(()) => format!(
                             "✅ Now following *{display}* (`{short}...`)\n💰 Bankroll: €{:.0}",
-                            COPY_TRADER_STARTING_BANKROLL
+                            cfg.copy_starting_bankroll
                         ),
                         Err(e) => format!("⚠️ Failed to follow: {e}"),
                     }

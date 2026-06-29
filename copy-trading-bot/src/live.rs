@@ -36,8 +36,8 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
                     if attempts >= 10 {
                         return Err(e.into());
                     }
-                    tracing::warn!(attempt = attempts, err = %e, "DB connect failed, retrying in 3s...");
-                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    tracing::warn!(attempt = attempts, err = %e, "DB connect failed, retrying...");
+                    tokio::time::sleep(Duration::from_secs(cfg.copy_db_retry_delay_secs)).await;
                 }
             }
         }
@@ -51,11 +51,15 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
         &cfg.telegram_chat_id,
     ));
 
+    let request_timeout = Duration::from_secs(cfg.copy_request_timeout_secs);
     let monitor = Arc::new(CopyTraderMonitor::new(
         reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
+            .timeout(request_timeout)
             .build()
             .expect("failed to build HTTP client"),
+        cfg.copy_data_api_url.clone(),
+        request_timeout,
+        cfg.copy_stale_trade_secs,
     ));
 
     let _ = notifier
@@ -72,7 +76,7 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
     let cmd_cfg = Arc::clone(&cfg);
     let cmd_monitor = Arc::clone(&monitor);
     let cmd_http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(request_timeout)
         .build()
         .expect("failed to build command HTTP client");
     let command_loop = tokio::spawn(async move {
@@ -104,7 +108,7 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
                     tracing::warn!(err = %e, chat_id = chat_id, "Failed to reply to command");
                 }
             }
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(cmd_cfg.copy_telegram_poll_secs)).await;
         }
     });
 
@@ -128,16 +132,26 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
     let hk_portfolio = Arc::clone(&portfolio);
     let hk_notifier = Arc::clone(&notifier);
     let hk_http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(request_timeout)
         .build()
         .expect("failed to build housekeeping HTTP client");
+    let hk_fee_pct = cfg.fee_pct;
+    let hk_gamma_api = cfg.copy_gamma_api_url.clone();
+    let hk_interval_mins = cfg.copy_housekeeping_interval_mins;
     let housekeeping_loop = tokio::spawn(async move {
         loop {
-            if let Err(e) = cycles::housekeeping_cycle(&hk_portfolio, &hk_notifier, &hk_http).await
+            if let Err(e) = cycles::housekeeping_cycle(
+                &hk_portfolio,
+                &hk_notifier,
+                &hk_http,
+                hk_fee_pct,
+                &hk_gamma_api,
+            )
+            .await
             {
                 tracing::error!(err = %e, "Copy housekeeping cycle failed");
             }
-            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            tokio::time::sleep(Duration::from_secs(hk_interval_mins * 60)).await;
         }
     });
 

@@ -198,16 +198,18 @@ impl GammaMarket {
     }
 }
 
-const GAMMA_API: &str = "https://gamma-api.polymarket.com";
-
 /// Fetch current YES prices for a batch of market IDs concurrently.
 ///
 /// Returns a `Vec<Option<f64>>` aligned with the input slice.
-pub async fn fetch_yes_prices(http: &reqwest::Client, market_ids: &[&str]) -> Vec<Option<f64>> {
+pub async fn fetch_yes_prices(
+    http: &reqwest::Client,
+    market_ids: &[&str],
+    gamma_api: &str,
+) -> Vec<Option<f64>> {
     let futs: Vec<_> = market_ids
         .iter()
         .map(|id| {
-            let url = format!("{GAMMA_API}/markets/{id}");
+            let url = format!("{gamma_api}/markets/{id}");
             async move {
                 let resp = http.get(&url).send().await.ok()?;
                 let text = resp.text().await.ok()?;
@@ -220,8 +222,12 @@ pub async fn fetch_yes_prices(http: &reqwest::Client, market_ids: &[&str]) -> Ve
 }
 
 /// Fetch a single market by its slug from the Gamma API.
-pub async fn fetch_market_by_slug(http: &reqwest::Client, slug: &str) -> Result<GammaMarket> {
-    let url = format!("{GAMMA_API}/markets?slug={slug}");
+pub async fn fetch_market_by_slug(
+    http: &reqwest::Client,
+    slug: &str,
+    gamma_api: &str,
+) -> Result<GammaMarket> {
+    let url = format!("{gamma_api}/markets?slug={slug}");
     let resp = http.get(&url).send().await?;
     let text = resp.text().await?;
     let markets: Vec<GammaMarket> = serde_json::from_str(&text)

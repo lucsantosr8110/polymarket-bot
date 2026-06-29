@@ -7,20 +7,20 @@ use crate::storage::portfolio::BetSide;
 use crate::storage::postgres::PgPortfolio;
 use crate::telegram::notifier::TelegramNotifier;
 
-const GAMMA_API: &str = "https://gamma-api.polymarket.com";
-
 pub async fn housekeeping_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
     http: &reqwest::Client,
+    fee_pct: f64,
+    gamma_api: &str,
 ) -> Result<()> {
     let open_ids = portfolio.open_copy_bet_market_ids().await?;
 
     for market_id in &open_ids {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        match check_market_resolution(http, market_id).await {
+        match check_market_resolution(http, market_id, gamma_api).await {
             Ok(Some(yes_won)) => {
-                if let Some(r) = portfolio.resolve_bet(market_id, yes_won).await? {
+                if let Some(r) = portfolio.resolve_bet(market_id, yes_won, fee_pct).await? {
                     let emoji = if r.won { "✅" } else { "❌" };
                     let result_label = if r.won { "WON" } else { "LOST" };
                     let side_emoji = match r.side {
@@ -75,8 +75,12 @@ pub async fn housekeeping_cycle(
     Ok(())
 }
 
-async fn check_market_resolution(http: &reqwest::Client, market_id: &str) -> Result<Option<bool>> {
-    let url = format!("{GAMMA_API}/markets/{market_id}");
+async fn check_market_resolution(
+    http: &reqwest::Client,
+    market_id: &str,
+    gamma_api: &str,
+) -> Result<Option<bool>> {
+    let url = format!("{gamma_api}/markets/{market_id}");
     let resp = http.get(&url).send().await?;
     let text = resp.text().await?;
     let market: GammaMarket = serde_json::from_str(&text)
