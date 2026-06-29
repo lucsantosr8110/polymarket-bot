@@ -142,6 +142,8 @@ pub fn record_runtime_config_status(ok: bool, changed: bool) {
     gauge!("bot_runtime_config_stale").set(if ok { 0.0 } else { 1.0 });
     if ok {
         counter!("bot_runtime_config_reload_checks_total").increment(1);
+    } else {
+        counter!("bot_runtime_config_reload_errors_total").increment(1);
     }
     if changed {
         counter!("bot_runtime_config_reloads_total").increment(1);
