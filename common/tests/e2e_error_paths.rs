@@ -13,10 +13,24 @@
 //! bet that would take the bankroll negative.
 
 use chrono::Utc;
+use polymarket_common::data::models::CategoryFeeDefaults;
 use polymarket_common::storage::portfolio::{BetSide, NewBet};
 use polymarket_common::storage::postgres::PgPortfolio;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+
+/// Every category maps to the same flat rate — mirrors the pre-dynamic-fee
+/// behavior for tests that aren't exercising category-specific routing.
+fn flat_fee_defaults(rate: f64) -> CategoryFeeDefaults {
+    CategoryFeeDefaults {
+        default: rate,
+        crypto: rate,
+        sports: rate,
+        politics: rate,
+        finance: rate,
+        other: rate,
+    }
+}
 
 struct SchemaGuard {
     root_pool: PgPool,
@@ -90,6 +104,17 @@ async fn setup(test_name: &str) -> (SchemaGuard, PgPortfolio, PgPool, String, St
 }
 
 fn make_bet(strategy: &str, market_id: &str, cost: f64, fee: f64, shares: f64) -> NewBet {
+    make_bet_with_category(strategy, market_id, cost, fee, shares, None)
+}
+
+fn make_bet_with_category(
+    strategy: &str,
+    market_id: &str,
+    cost: f64,
+    fee: f64,
+    shares: f64,
+    category: Option<&str>,
+) -> NewBet {
     NewBet {
         market_id: market_id.into(),
         question: "e2e error path test".into(),
@@ -112,7 +137,7 @@ fn make_bet(strategy: &str, market_id: &str, cost: f64, fee: f64, shares: f64) -
         event_slug: None,
         features: None,
         copy_ref: None,
-        category: None,
+        category: category.map(String::from),
     }
 }
 
@@ -211,7 +236,7 @@ async fn t2_settle_loss_debits_no_payout() {
     let bankroll_after_place = seeded_bankroll - (cost + fee); // 989.8
 
     let resolved_bet = portfolio
-        .resolve_bet(&market_id, false, 0.02) // side=Yes, yes_won=false => bet lost
+        .resolve_bet(&market_id, false, &flat_fee_defaults(0.02)) // side=Yes, yes_won=false => bet lost
         .await
         .expect("resolve_bet ok")
         .expect("must find the open bet");
@@ -263,7 +288,7 @@ async fn t3_resolve_bet_is_idempotent() {
     portfolio.place_bet(&bet).await.expect("place_bet ok");
 
     let first = portfolio
-        .resolve_bet(&market_id, true, 0.02)
+        .resolve_bet(&market_id, true, &flat_fee_defaults(0.02))
         .await
         .expect("first resolve ok")
         .expect("must resolve the open bet");
@@ -288,7 +313,7 @@ async fn t3_resolve_bet_is_idempotent() {
     // Second resolve on the same (already-resolved) market must be a no-op:
     // the lookup query filters `resolved = false`, so it finds nothing.
     let second = portfolio
-        .resolve_bet(&market_id, true, 0.02)
+        .resolve_bet(&market_id, true, &flat_fee_defaults(0.02))
         .await
         .expect("second resolve call must not error");
     assert!(
@@ -315,4 +340,49 @@ async fn t3_resolve_bet_is_idempotent() {
             .unwrap();
     assert_eq!(won, Some(true));
     assert_eq!(pnl, Some(expected_pnl));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires live Postgres (DATABASE_URL)"]
+async fn t4_resolve_bet_uses_category_specific_fee_rate() {
+    let (_guard, portfolio, pool, strategy, market_id) = setup("t4").await;
+    let bankroll_key = format!("bankroll:{strategy}");
+
+    let seeded_bankroll = 1000.0_f64;
+    sqlx::query("INSERT INTO portfolio (key, value_f64) VALUES ($1, $2)")
+        .bind(&bankroll_key)
+        .bind(seeded_bankroll)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let cost = 10.0_f64;
+    let fee = 0.2_f64;
+    let shares = 20.0_f64;
+    let bet = make_bet_with_category(&strategy, &market_id, cost, fee, shares, Some("Crypto"));
+    portfolio.place_bet(&bet).await.expect("place_bet ok");
+
+    // default rate is 0%, crypto rate is 5% — if resolve_bet ignored the
+    // bet's stored category and fell through to `default`, exit_fee would be 0.
+    let defaults = CategoryFeeDefaults {
+        default: 0.0,
+        crypto: 0.05,
+        sports: 0.0,
+        politics: 0.0,
+        finance: 0.0,
+        other: 0.0,
+    };
+    let resolved = portfolio
+        .resolve_bet(&market_id, true, &defaults)
+        .await
+        .expect("resolve_bet ok")
+        .expect("must find the open bet");
+
+    let gross_payout = shares;
+    let expected_exit_fee = gross_payout * 0.05;
+    let expected_pnl = (gross_payout - expected_exit_fee) - cost - fee;
+    assert_eq!(
+        resolved.pnl, expected_pnl,
+        "exit fee must use the bet's Crypto category rate, not the default"
+    );
 }

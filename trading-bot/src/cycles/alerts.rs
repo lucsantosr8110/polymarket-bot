@@ -198,7 +198,7 @@ pub async fn alert_loop(
 
                     let slipped_price = (signal.current_price * (1.0 + cfg.slippage_pct)).min(0.99);
                     let shares = raw_bet / slipped_price;
-                    let fee = raw_bet * cfg.fee_pct;
+                    let fee = raw_bet * signal.fee_rate;
                     let total_cost = raw_bet + fee;
                     if total_cost > strat_bankroll {
                         continue;
@@ -227,7 +227,7 @@ pub async fn alert_loop(
                         event_slug: signal.event_slug.clone(),
                         features: signal.features.clone(),
                         copy_ref: None,
-                        category: None,
+                        category: signal.category.clone(),
                     };
 
                     // Log prediction for Brier score tracking

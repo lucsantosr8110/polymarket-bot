@@ -9,10 +9,22 @@
 //! #[ignore] por padrão — sem DB externo o teste é skipped, não falha.
 
 use chrono::Utc;
+use polymarket_common::data::models::CategoryFeeDefaults;
 use polymarket_common::storage::portfolio::{BetSide, NewBet};
 use polymarket_common::storage::postgres::PgPortfolio;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+
+fn flat_fee_defaults(rate: f64) -> CategoryFeeDefaults {
+    CategoryFeeDefaults {
+        default: rate,
+        crypto: rate,
+        sports: rate,
+        politics: rate,
+        finance: rate,
+        other: rate,
+    }
+}
 
 /// Stand-in for the Polymarket price feed — the only externally-facing
 /// dependency in the signal -> bet flow. Kept as a trait so the mock is
@@ -176,7 +188,7 @@ async fn signal_to_place_bet_to_settle_e2e() {
 
     // --- 4. settle market WIN (real resolve_bet) -> payout, bankroll credited.
     let resolved_bet = portfolio
-        .resolve_bet(&market_id, true, 0.02)
+        .resolve_bet(&market_id, true, &flat_fee_defaults(0.02))
         .await
         .expect("resolve_bet should succeed")
         .expect("resolve_bet must find the open bet");

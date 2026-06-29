@@ -73,11 +73,59 @@ pub struct GammaMarket {
     pub created_at: Option<String>,
     #[serde(default)]
     pub events: Vec<GammaEvent>,
+    /// Taker fee schedule for this market, when fees are enabled (ADR: dynamic
+    /// per-category fees). Absent for fee-free markets (e.g. geopolitics).
+    #[serde(default)]
+    pub fee_schedule: Option<FeeSchedule>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GammaEvent {
     pub slug: String,
+}
+
+/// Taker fee rate for a market, as returned by the Gamma `/markets` endpoint.
+/// Only `rate` is modeled — the bot treats fees as a flat % of stake (matching
+/// existing `fee_pct` semantics); `exponent`/`takerOnly`/`rebateRate` describe
+/// Polymarket's price-weighted fee curve and maker rebates, not needed here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeeSchedule {
+    pub rate: f64,
+}
+
+/// Per-category fallback fee rates, used when a market has no `fee_schedule`
+/// (or for exit fees, where the schedule isn't persisted with the bet).
+#[derive(Debug, Clone, Copy)]
+pub struct CategoryFeeDefaults {
+    pub default: f64,
+    pub crypto: f64,
+    pub sports: f64,
+    pub politics: f64,
+    pub finance: f64,
+    pub other: f64,
+}
+
+/// Map a Gamma `category` string to a fallback fee rate. Unmapped/unknown
+/// categories (Economics, Culture, Weather, Tech, Mentions, ...) fall back to
+/// `other`; a missing category falls back to `default`.
+pub fn category_fee_rate(category: Option<&str>, defaults: &CategoryFeeDefaults) -> f64 {
+    let Some(cat) = category else {
+        return defaults.default;
+    };
+    let cat = cat.to_lowercase();
+    if cat.is_empty() {
+        defaults.default
+    } else if cat.contains("crypto") {
+        defaults.crypto
+    } else if cat.contains("sport") {
+        defaults.sports
+    } else if cat.contains("politic") {
+        defaults.politics
+    } else if cat.contains("financ") || cat.contains("business") || cat.contains("economic") {
+        defaults.finance
+    } else {
+        defaults.other
+    }
 }
 
 impl GammaMarket {
@@ -196,6 +244,15 @@ impl GammaMarket {
         let p: Vec<String> = serde_json::from_str(s).ok()?;
         p.first().and_then(|v| v.parse::<f64>().ok())
     }
+
+    /// Taker fee rate to apply for a bet on this market: prefers the live
+    /// `fee_schedule.rate` from Gamma, falling back to the category default.
+    pub fn effective_fee_rate(&self, defaults: &CategoryFeeDefaults) -> f64 {
+        self.fee_schedule
+            .as_ref()
+            .map(|f| f.rate)
+            .unwrap_or_else(|| category_fee_rate(self.category.as_deref(), defaults))
+    }
 }
 
 /// Fetch current YES prices for a batch of market IDs concurrently.
@@ -236,4 +293,85 @@ pub async fn fetch_market_by_slug(
         .into_iter()
         .next()
         .with_context(|| format!("market slug={slug} not found"))
+}
+
+#[cfg(test)]
+mod fee_tests {
+    use super::*;
+
+    fn defaults() -> CategoryFeeDefaults {
+        CategoryFeeDefaults {
+            default: 0.0,
+            crypto: 0.018,
+            sports: 0.0075,
+            politics: 0.01,
+            finance: 0.01,
+            other: 0.0125,
+        }
+    }
+
+    #[test]
+    fn category_fee_rate_matches_crypto() {
+        assert_eq!(category_fee_rate(Some("Crypto"), &defaults()), 0.018);
+    }
+
+    #[test]
+    fn category_fee_rate_matches_sports_case_insensitive() {
+        assert_eq!(category_fee_rate(Some("SPORTS"), &defaults()), 0.0075);
+    }
+
+    #[test]
+    fn category_fee_rate_matches_politics() {
+        let d = defaults();
+        assert_eq!(category_fee_rate(Some("Politics"), &d), d.politics);
+    }
+
+    #[test]
+    fn category_fee_rate_matches_finance_synonyms() {
+        let d = defaults();
+        assert_eq!(category_fee_rate(Some("Business"), &d), d.finance);
+        assert_eq!(category_fee_rate(Some("Economics"), &d), d.finance);
+    }
+
+    #[test]
+    fn category_fee_rate_unmapped_category_falls_back_to_other() {
+        assert_eq!(category_fee_rate(Some("Culture"), &defaults()), defaults().other);
+    }
+
+    #[test]
+    fn category_fee_rate_missing_category_falls_back_to_default() {
+        assert_eq!(category_fee_rate(None, &defaults()), defaults().default);
+    }
+
+    fn market_with(category: Option<&str>, fee_schedule: Option<FeeSchedule>) -> GammaMarket {
+        GammaMarket {
+            market_id: "1".to_string(),
+            question: "q".to_string(),
+            clob_token_ids: None,
+            end_date: None,
+            outcome_prices: None,
+            outcomes: None,
+            slug: None,
+            category: category.map(String::from),
+            volume_num: 0.0,
+            liquidity_num: 0.0,
+            one_day_price_change: None,
+            one_week_price_change: None,
+            created_at: None,
+            events: vec![],
+            fee_schedule,
+        }
+    }
+
+    #[test]
+    fn effective_fee_rate_prefers_live_fee_schedule() {
+        let m = market_with(Some("Crypto"), Some(FeeSchedule { rate: 0.05 }));
+        assert_eq!(m.effective_fee_rate(&defaults()), 0.05);
+    }
+
+    #[test]
+    fn effective_fee_rate_falls_back_to_category_when_no_schedule() {
+        let m = market_with(Some("Sports"), None);
+        assert_eq!(m.effective_fee_rate(&defaults()), defaults().sports);
+    }
 }

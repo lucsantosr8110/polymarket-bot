@@ -113,6 +113,10 @@ pub struct Signal {
     pub event_slug: Option<String>,
     /// Exact feature vector at signal time for online learning (ADR 004).
     pub features: Option<MarketFeatures>,
+    /// Market category from Gamma API (for post-hoc analysis + fee lookup).
+    pub category: Option<String>,
+    /// Taker fee rate for this market (live `fee_schedule`, or category fallback).
+    pub fee_rate: f64,
 }
 
 impl Signal {
@@ -1392,6 +1396,8 @@ impl LiveScanner {
                     news_headlines,
                 },
                 features: Some(signal_features),
+                category: c.market.category.clone(),
+                fee_rate: c.market.effective_fee_rate(&self.cfg.category_fee_defaults()),
             });
         }
 
@@ -1659,6 +1665,8 @@ impl LiveScanner {
                     news_headlines,
                 },
                 features: Some(signal_features),
+                category: nm.market.category.clone(),
+                fee_rate: nm.market.effective_fee_rate(&self.cfg.category_fee_defaults()),
             });
         }
 
@@ -1788,6 +1796,8 @@ impl LiveScanner {
                 news_headlines: Vec::new(),
             },
             features: Some(features),
+            category: market.category.clone(),
+            fee_rate: market.effective_fee_rate(&self.cfg.category_fee_defaults()),
         }))
     }
 
@@ -2282,6 +2292,8 @@ mod tests {
             event_slug: None,
             context: BetContext::default(),
             features: None,
+            category: None,
+            fee_rate: 0.02,
         };
         let expected = 0.20 * 0.80 * 0.10;
         assert!((signal.score() - expected).abs() < 1e-9);
@@ -2309,6 +2321,8 @@ mod tests {
             event_slug: None,
             context: BetContext::default(),
             features: None,
+            category: None,
+            fee_rate: 0.02,
         }
     }
 

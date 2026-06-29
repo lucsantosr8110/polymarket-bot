@@ -188,7 +188,7 @@ pub async fn bet_scan_cycle(
                         strat.min_bet,
                         signal.current_price,
                         cfg.slippage_pct,
-                        cfg.fee_pct,
+                        signal.fee_rate,
                     ) {
                         Ok(sizing) => sizing,
                         Err(BetSizingError::BelowMinBet { raw_bet }) => {
@@ -322,7 +322,7 @@ pub async fn bet_scan_cycle(
                     event_slug: signal.event_slug.clone(),
                     features: signal.features.clone(),
                     copy_ref: None,
-                    category: None,
+                    category: signal.category.clone(),
                 };
 
                 // Log prediction for Brier score tracking

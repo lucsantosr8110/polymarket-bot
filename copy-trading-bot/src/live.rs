@@ -135,7 +135,7 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
         .timeout(request_timeout)
         .build()
         .expect("failed to build housekeeping HTTP client");
-    let hk_fee_pct = cfg.fee_pct;
+    let hk_fee_defaults = cfg.category_fee_defaults();
     let hk_gamma_api = cfg.copy_gamma_api_url.clone();
     let hk_interval_mins = cfg.copy_housekeeping_interval_mins;
     let housekeeping_loop = tokio::spawn(async move {
@@ -144,7 +144,7 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
                 &hk_portfolio,
                 &hk_notifier,
                 &hk_http,
-                hk_fee_pct,
+                &hk_fee_defaults,
                 &hk_gamma_api,
             )
             .await

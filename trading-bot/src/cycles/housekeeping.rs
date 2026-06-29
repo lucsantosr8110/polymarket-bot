@@ -1,4 +1,5 @@
 use anyhow::Result;
+use polymarket_common::data::models::CategoryFeeDefaults;
 use std::time::Duration;
 
 use crate::format;
@@ -16,7 +17,7 @@ pub async fn housekeeping_cycle(
     scanner: &LiveScanner,
     stop_loss_pct: f64,
     exit_days_before_expiry: i64,
-    fee_pct: f64,
+    fee_defaults: &CategoryFeeDefaults,
 ) -> Result<()> {
     portfolio.reset_daily_if_needed().await?;
 
@@ -31,7 +32,7 @@ pub async fn housekeeping_cycle(
                 if let Err(e) = portfolio.resolve_estimates(market_id, yes_won).await {
                     tracing::warn!(err = %e, "Failed to resolve LLM estimates");
                 }
-                if let Some(r) = portfolio.resolve_bet(market_id, yes_won, fee_pct).await? {
+                if let Some(r) = portfolio.resolve_bet(market_id, yes_won, fee_defaults).await? {
                     let emoji = if r.won { "✅" } else { "❌" };
                     let result_label = if r.won { "WON" } else { "LOST" };
                     let roi = bet_roi(r.pnl, r.cost, r.entry_fee);
@@ -189,7 +190,7 @@ pub async fn housekeeping_cycle(
             };
 
             if let Some(reason) = exit_reason {
-                match portfolio.early_exit(bet.id, current, &reason, fee_pct).await {
+                match portfolio.early_exit(bet.id, current, &reason, fee_defaults).await {
                     Ok(Some(r)) => {
                         let strat_label = strategy::strategy_label(&r.strategy);
                         let side_emoji = match r.side {
@@ -270,7 +271,7 @@ fn bet_roi(pnl: f64, cost: f64, entry_fee: f64) -> f64 {
 mod tests {
     use super::*;
 
-    // fee_pct used by resolve_bet
+    // Mirrors resolve_bet's exit-fee math for these pure bet_roi() fixtures.
     const FEE_PCT: f64 = 0.02;
 
     fn resolve_pnl(shares: f64, cost: f64, entry_fee: f64, won: bool) -> f64 {

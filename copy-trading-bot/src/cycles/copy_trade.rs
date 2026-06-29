@@ -117,7 +117,12 @@ pub async fn copy_trade_cycle(
                 );
 
                 match portfolio
-                    .early_exit(bet.id, current_yes_price, &reason, cfg.fee_pct)
+                    .early_exit(
+                        bet.id,
+                        current_yes_price,
+                        &reason,
+                        &cfg.category_fee_defaults(),
+                    )
                     .await
                 {
                     Ok(Some(r)) => {
@@ -265,7 +270,8 @@ pub async fn copy_trade_cycle(
         let bet_amount = raw_bet;
         let slipped_price = (entry_price * (1.0 + cfg.slippage_pct)).min(0.99);
         let shares = bet_amount / slipped_price;
-        let fee = bet_amount * cfg.fee_pct;
+        let fee_rate = market.effective_fee_rate(&cfg.category_fee_defaults());
+        let fee = bet_amount * fee_rate;
         let total_cost = bet_amount + fee;
 
         if total_cost > trader_bankroll {
@@ -330,7 +336,7 @@ pub async fn copy_trade_cycle(
                 price: trade.price,
                 size_usd: trade.size_usd,
             }),
-            category: None,
+            category: market.category.clone(),
         };
 
         // Log prediction for model learning (Brier score tracking)

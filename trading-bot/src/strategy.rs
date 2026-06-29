@@ -173,6 +173,8 @@ mod tests {
             event_slug: None,
             context: BetContext::default(),
             features: None,
+            category: None,
+            fee_rate: 0.02,
         }
     }
 

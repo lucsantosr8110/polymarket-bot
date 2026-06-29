@@ -1,4 +1,5 @@
 use confique::Config;
+use polymarket_common::data::models::CategoryFeeDefaults;
 
 #[derive(Debug, Config)]
 pub struct CopyTradingConfig {
@@ -23,9 +24,25 @@ pub struct CopyTradingConfig {
     #[config(env = "SLIPPAGE_PCT", default = 0.01)]
     pub slippage_pct: f64,
 
-    /// Fee assumption as a fraction (0.02 = 2%).
-    #[config(env = "FEE_PCT", default = 0.02)]
-    pub fee_pct: f64,
+    // --- Per-category fee fallbacks (shared FEE_PCT_* env vars with
+    // trading-bot's AppConfig — see GammaMarket::effective_fee_rate) ---
+    #[config(env = "FEE_PCT_DEFAULT", default = 0.0)]
+    pub fee_pct_default: f64,
+
+    #[config(env = "FEE_PCT_CRYPTO", default = 0.018)]
+    pub fee_pct_crypto: f64,
+
+    #[config(env = "FEE_PCT_SPORTS", default = 0.0075)]
+    pub fee_pct_sports: f64,
+
+    #[config(env = "FEE_PCT_POLITICS", default = 0.01)]
+    pub fee_pct_politics: f64,
+
+    #[config(env = "FEE_PCT_FINANCE", default = 0.01)]
+    pub fee_pct_finance: f64,
+
+    #[config(env = "FEE_PCT_OTHER", default = 0.0125)]
+    pub fee_pct_other: f64,
 
     /// Port for the Prometheus metrics HTTP endpoint.
     #[config(env = "METRICS_PORT", default = 9001)]
@@ -84,5 +101,16 @@ pub struct CopyTradingConfig {
 impl CopyTradingConfig {
     pub fn load() -> Result<Self, confique::Error> {
         Self::builder().env().load()
+    }
+
+    pub fn category_fee_defaults(&self) -> CategoryFeeDefaults {
+        CategoryFeeDefaults {
+            default: self.fee_pct_default,
+            crypto: self.fee_pct_crypto,
+            sports: self.fee_pct_sports,
+            politics: self.fee_pct_politics,
+            finance: self.fee_pct_finance,
+            other: self.fee_pct_other,
+        }
     }
 }

@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
+use crate::data::models::{category_fee_rate, CategoryFeeDefaults};
 use super::portfolio::{Bet, BetContext, BetSide, CopyRef, NewBet};
 
 /// A signal that was evaluated but didn't pass the scanner gate.
@@ -995,7 +996,7 @@ impl PgPortfolio {
         &self,
         market_id: &str,
         yes_won: bool,
-        fee_pct: f64,
+        fee_defaults: &CategoryFeeDefaults,
     ) -> Result<Option<ResolvedBet>> {
         // Find unresolved bet for this market
         #[derive(sqlx::FromRow)]
@@ -1011,11 +1012,12 @@ impl PgPortfolio {
             confidence: f64,
             strategy: String,
             source: String,
+            category: Option<String>,
         }
 
         let row: Option<OpenBetRow> = sqlx::query_as(
             "SELECT id, side, shares, cost, fee_paid, question, entry_price, edge, confidence, \
-             strategy, source FROM bets WHERE market_id = $1 AND resolved = false LIMIT 1",
+             strategy, source, category FROM bets WHERE market_id = $1 AND resolved = false LIMIT 1",
         )
         .bind(market_id)
         .fetch_optional(&self.pool)
@@ -1036,6 +1038,7 @@ impl PgPortfolio {
             confidence,
             strategy,
             source,
+            category,
         ) = (
             r.id,
             r.side,
@@ -1048,6 +1051,7 @@ impl PgPortfolio {
             r.confidence,
             r.strategy,
             r.source,
+            r.category,
         );
 
         let side = if side_str == "Yes" {
@@ -1060,6 +1064,7 @@ impl PgPortfolio {
             BetSide::No => !yes_won,
         };
 
+        let fee_pct = category_fee_rate(category.as_deref(), fee_defaults);
         let gross_payout = if bet_won { shares } else { 0.0 };
         let exit_fee = gross_payout * fee_pct;
         let net_payout = gross_payout - exit_fee;
@@ -1152,7 +1157,7 @@ impl PgPortfolio {
         bet_id: i32,
         current_yes_price: f64,
         reason: &str,
-        fee_pct: f64,
+        fee_defaults: &CategoryFeeDefaults,
     ) -> Result<Option<ResolvedBet>> {
         #[derive(sqlx::FromRow)]
         struct OpenBetRow {
@@ -1168,11 +1173,12 @@ impl PgPortfolio {
             confidence: f64,
             strategy: String,
             source: String,
+            category: Option<String>,
         }
 
         let row: Option<OpenBetRow> = sqlx::query_as(
             "SELECT id, market_id, side, shares, cost, fee_paid, question, entry_price, edge, \
-             confidence, strategy, source FROM bets WHERE id = $1 AND resolved = false LIMIT 1",
+             confidence, strategy, source, category FROM bets WHERE id = $1 AND resolved = false LIMIT 1",
         )
         .bind(bet_id)
         .fetch_optional(&self.pool)
@@ -1188,6 +1194,7 @@ impl PgPortfolio {
             BetSide::No
         };
 
+        let fee_pct = category_fee_rate(r.category.as_deref(), fee_defaults);
         // Selling shares at current market price
         let sell_price = match side {
             BetSide::Yes => current_yes_price,

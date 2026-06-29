@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::time::Duration;
 
-use crate::data::models::GammaMarket;
+use crate::data::models::{CategoryFeeDefaults, GammaMarket};
 use crate::live::broadcast;
 use crate::storage::portfolio::BetSide;
 use crate::storage::postgres::PgPortfolio;
@@ -11,7 +11,7 @@ pub async fn housekeeping_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
     http: &reqwest::Client,
-    fee_pct: f64,
+    fee_defaults: &CategoryFeeDefaults,
     gamma_api: &str,
 ) -> Result<()> {
     let open_ids = portfolio.open_copy_bet_market_ids().await?;
@@ -20,7 +20,7 @@ pub async fn housekeeping_cycle(
         tokio::time::sleep(Duration::from_millis(200)).await;
         match check_market_resolution(http, market_id, gamma_api).await {
             Ok(Some(yes_won)) => {
-                if let Some(r) = portfolio.resolve_bet(market_id, yes_won, fee_pct).await? {
+                if let Some(r) = portfolio.resolve_bet(market_id, yes_won, fee_defaults).await? {
                     let emoji = if r.won { "✅" } else { "❌" };
                     let result_label = if r.won { "WON" } else { "LOST" };
                     let side_emoji = match r.side {

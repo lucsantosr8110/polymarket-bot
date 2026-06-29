@@ -1,4 +1,5 @@
 use confique::Config;
+use polymarket_common::data::models::CategoryFeeDefaults;
 
 #[derive(Debug, Config)]
 pub struct AppConfig {
@@ -37,9 +38,28 @@ pub struct AppConfig {
     #[config(env = "SLIPPAGE_PCT", default = 0.01)]
     pub slippage_pct: f64,
 
-    /// Fee assumption as a fraction (0.02 = 2%).
-    #[config(env = "FEE_PCT", default = 0.02)]
-    pub fee_pct: f64,
+    // --- Per-category fee fallbacks (used when a market has no live
+    // fee_schedule from Gamma; see GammaMarket::effective_fee_rate) ---
+    /// Fallback rate for markets with no category (e.g. geopolitics, free).
+    #[config(env = "FEE_PCT_DEFAULT", default = 0.0)]
+    pub fee_pct_default: f64,
+
+    #[config(env = "FEE_PCT_CRYPTO", default = 0.018)]
+    pub fee_pct_crypto: f64,
+
+    #[config(env = "FEE_PCT_SPORTS", default = 0.0075)]
+    pub fee_pct_sports: f64,
+
+    #[config(env = "FEE_PCT_POLITICS", default = 0.01)]
+    pub fee_pct_politics: f64,
+
+    #[config(env = "FEE_PCT_FINANCE", default = 0.01)]
+    pub fee_pct_finance: f64,
+
+    /// Fallback for recognized-but-unmapped categories (Economics, Culture,
+    /// Weather, Tech, Mentions, ...).
+    #[config(env = "FEE_PCT_OTHER", default = 0.0125)]
+    pub fee_pct_other: f64,
 
     // --- Scanner filters ---
     /// Minimum market volume to consider.
@@ -269,6 +289,19 @@ impl AppConfig {
         Self::builder().env().load()
     }
 
+    /// Per-category fee fallbacks, for `GammaMarket::effective_fee_rate` /
+    /// `category_fee_rate` (used when a market has no live `fee_schedule`).
+    pub fn category_fee_defaults(&self) -> CategoryFeeDefaults {
+        CategoryFeeDefaults {
+            default: self.fee_pct_default,
+            crypto: self.fee_pct_crypto,
+            sports: self.fee_pct_sports,
+            politics: self.fee_pct_politics,
+            finance: self.fee_pct_finance,
+            other: self.fee_pct_other,
+        }
+    }
+
     /// Parsed, trimmed, non-empty model list from `LLM_MODELS` (CSV).
     /// Falls back to `[llm_model]` if `LLM_MODELS` is unset/empty.
     pub fn llm_models(&self) -> Vec<String> {
@@ -296,7 +329,12 @@ impl AppConfig {
             bet_scan_interval_mins: 10,
             news_enabled: false,
             slippage_pct: 0.01,
-            fee_pct: 0.02,
+            fee_pct_default: 0.0,
+            fee_pct_crypto: 0.018,
+            fee_pct_sports: 0.0075,
+            fee_pct_politics: 0.01,
+            fee_pct_finance: 0.01,
+            fee_pct_other: 0.0125,
             min_volume: 1000.0,
             min_book_depth: 200.0,
             kelly_fraction: 0.25,
