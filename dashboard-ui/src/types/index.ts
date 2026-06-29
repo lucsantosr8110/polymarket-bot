@@ -104,6 +104,25 @@ export type GlobalConfig = {
   [key: string]: string | number | boolean | string[] | undefined
 }
 
+// Avg/p95 seconds per bot operation, sourced from Prometheus
+// bot_operation_duration_seconds via dashboard-api. Each field is
+// independently null until that operation has run at least once since the
+// bot's last restart, or if Prometheus is unreachable.
+export type LatencyMetrics = {
+  bet_scan_avg: number | null
+  bet_scan_p95: number | null
+  fetch_markets_avg: number | null
+  fetch_markets_p95: number | null
+  predict_batch_avg: number | null
+  predict_batch_p95: number | null
+  place_bet_avg: number | null
+  place_bet_p95: number | null
+  housekeeping_avg: number | null
+  housekeeping_p95: number | null
+  runtime_config_poll_avg: number | null
+  runtime_config_poll_p95: number | null
+}
+
 export type LogEntry = {
   timestamp: string
   level: string

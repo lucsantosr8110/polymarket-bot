@@ -8,6 +8,7 @@ import { Header } from './components/Layout/Header'
 import { Sidebar } from './components/Layout/Sidebar'
 import { LogStream } from './components/Logs/LogStream'
 import { KPICard } from './components/Overview/KPICard'
+import { LatencyCard } from './components/Overview/LatencyCard'
 import { PnLChart } from './components/Overview/PnLChart'
 import { SignalTable } from './components/Signals/SignalTable'
 import { StrategyCard } from './components/Strategies/StrategyCard'
@@ -17,6 +18,7 @@ import {
   getBetHistory,
   getGlobalConfig,
   getHealth,
+  getLatencyMetrics,
   getOpenBets,
   getOverview,
   getRecentSignals,
@@ -24,7 +26,15 @@ import {
   updateGlobalConfig,
   updateStrategy
 } from './services/api'
-import type { BetHistory, GlobalConfig as GlobalConfigType, NavKey, Overview, Strategy, StrategyPatch } from './types'
+import type {
+  BetHistory,
+  GlobalConfig as GlobalConfigType,
+  LatencyMetrics,
+  NavKey,
+  Overview,
+  Strategy,
+  StrategyPatch
+} from './types'
 import { formatCurrency, formatPercent } from './utils/format'
 
 export default function App() {
@@ -41,6 +51,7 @@ export default function App() {
   const signals = useApi(() => getRecentSignals(20), 10000)
   const strategies = useApi(getStrategies, 15000)
   const globalConfig = useApi(getGlobalConfig, 15000)
+  const latency = useApi(getLatencyMetrics, 15000)
 
   const saveStrategy = async (name: string, patch: StrategyPatch) => {
     setSavingStrategy(true)
@@ -85,11 +96,28 @@ export default function App() {
 
         <main className="grid min-w-0 flex-1 gap-4">
           <Header health={health.data} />
-          <StatusLine errors={[health.error, overview.error, openBets.error, betHistory.error, signals.error, strategies.error, globalConfig.error]} />
+          <StatusLine
+            errors={[
+              health.error,
+              overview.error,
+              openBets.error,
+              betHistory.error,
+              signals.error,
+              strategies.error,
+              globalConfig.error,
+              latency.error
+            ]}
+          />
           {saveError ? <SaveErrorBanner message={saveError} onDismiss={() => setSaveError(null)} /> : null}
 
           {active === 'overview' ? (
-            <OverviewPanel overview={overview.data} history={betHistory.data ?? []} loading={overview.loading} />
+            <OverviewPanel
+              overview={overview.data}
+              history={betHistory.data ?? []}
+              loading={overview.loading}
+              latency={latency.data}
+              latencyLoading={latency.loading}
+            />
           ) : null}
 
           {active === 'bets' ? (
@@ -143,11 +171,15 @@ export default function App() {
 function OverviewPanel({
   overview,
   history,
-  loading
+  loading,
+  latency,
+  latencyLoading
 }: {
   overview: Overview | null
   history: BetHistory[]
   loading: boolean
+  latency: LatencyMetrics | null
+  latencyLoading: boolean
 }) {
   if (!overview && loading) {
     return <EmptyState label="Loading telemetry" />
@@ -185,6 +217,8 @@ function OverviewPanel({
           <StatLine icon={BarChart3} label="Last scan" value={data.last_scan ? new Date(data.last_scan).toLocaleString() : '-'} />
         </div>
       </div>
+
+      <LatencyCard metrics={latency} loading={latencyLoading} />
     </div>
   )
 }

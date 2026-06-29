@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { BetHistory, GlobalConfig, Health, OpenBet, Overview, Signal, Strategy, StrategyPatch } from '../types'
+import type { BetHistory, GlobalConfig, Health, LatencyMetrics, OpenBet, Overview, Signal, Strategy, StrategyPatch } from '../types'
 
 // Default to same-origin so the nginx reverse proxy (prod) and the Vite dev
 // proxy both serve /api without CORS. Override with VITE_API_URL to point at a
@@ -32,6 +32,8 @@ export const updateStrategy = (name: string, data: StrategyPatch) => unwrap<Stra
 export const getGlobalConfig = () => unwrap<GlobalConfig>(api.get('/api/config/global'))
 
 export const updateGlobalConfig = (data: GlobalConfig) => unwrap<GlobalConfig>(api.put('/api/config/global', data))
+
+export const getLatencyMetrics = () => unwrap<LatencyMetrics>(api.get('/api/metrics/latency'))
 
 export const wsLogsUrl = () => {
   const url = new URL(API_BASE)
