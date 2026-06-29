@@ -58,11 +58,18 @@ jobs:
         run: |
           rsync -az --delete \
             -e "ssh -i ~/.ssh/deploy_key" \
+            --exclude='dashboard-ui/node_modules' \
+            --exclude='dashboard-ui/dist' \
+            --exclude='dashboard_api/__pycache__' \
+            --exclude='dashboard_api/.venv' \
+            --exclude='**/__pycache__' \
             --include='docker-compose.yml' \
             --include='CHANGELOG.gen' \
             --include='scripts/***' \
             --include='migrations/***' \
             --include='monitoring/***' \
+            --include='dashboard_api/***' \
+            --include='dashboard-ui/***' \
             --exclude='*' \
             ./ "deploy@$DEPLOY_HOST:$DEPLOY_DIR/"
 
@@ -79,6 +86,6 @@ jobs:
             cd $DEPLOY_DIR && \
             docker pull $IMAGE && \
             docker pull $IMAGE_COPY && \
-            docker compose build model-server && \
+            docker compose build model-server dashboard-api dashboard-ui && \
             docker compose up -d && \
             docker compose logs --tail=20 bot copy-trading-bot"
