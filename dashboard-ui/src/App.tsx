@@ -32,6 +32,7 @@ export default function App() {
   const [editingStrategy, setEditingStrategy] = useState<Strategy | null>(null)
   const [savingStrategy, setSavingStrategy] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const health = useApi(getHealth, 5000)
   const overview = useApi(getOverview, 10000)
@@ -43,10 +44,13 @@ export default function App() {
 
   const saveStrategy = async (name: string, patch: StrategyPatch) => {
     setSavingStrategy(true)
+    setSaveError(null)
     try {
       const updated = await updateStrategy(name, patch)
       strategies.setData((strategies.data ?? []).map((strategy) => (strategy.name === updated.name ? updated : strategy)))
       setEditingStrategy(null)
+    } catch (error) {
+      setSaveError(`Failed to save strategy "${name}": ${describeSaveError(error)}`)
     } finally {
       setSavingStrategy(false)
     }
@@ -54,9 +58,12 @@ export default function App() {
 
   const saveGlobalConfig = async (patch: GlobalConfigType) => {
     setSavingConfig(true)
+    setSaveError(null)
     try {
       const updated = await updateGlobalConfig(patch)
       globalConfig.setData(updated)
+    } catch (error) {
+      setSaveError(`Failed to save global config: ${describeSaveError(error)}`)
     } finally {
       setSavingConfig(false)
     }
@@ -79,6 +86,7 @@ export default function App() {
         <main className="grid min-w-0 flex-1 gap-4">
           <Header health={health.data} />
           <StatusLine errors={[health.error, overview.error, openBets.error, betHistory.error, signals.error, strategies.error, globalConfig.error]} />
+          {saveError ? <SaveErrorBanner message={saveError} onDismiss={() => setSaveError(null)} /> : null}
 
           {active === 'overview' ? (
             <OverviewPanel overview={overview.data} history={betHistory.data ?? []} loading={overview.loading} />
@@ -209,6 +217,48 @@ function StatusLine({ errors }: { errors: Array<string | null> }) {
 
 function EmptyState({ label }: { label: string }) {
   return <div className="cyber-card p-8 text-center text-sm text-cyber-muted">{label}</div>
+}
+
+function SaveErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-md border border-cyber-red/40 bg-cyber-red/10 px-4 py-3 text-sm text-cyber-red">
+      <span>{message}</span>
+      <button type="button" onClick={onDismiss} className="shrink-0 text-cyber-red/70 hover:text-cyber-red">
+        Dismiss
+      </button>
+    </div>
+  )
+}
+
+function describeSaveError(error: unknown): string {
+  if (isAxiosLikeError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string') {
+      return detail
+    }
+    if (Array.isArray(detail) && detail.length > 0) {
+      // Pydantic 422 returns a list of {loc, msg, type}.
+      return detail.map((item) => (item?.loc ? `${item.loc.join('.')}: ${item.msg}` : item.msg)).join('; ')
+    }
+    if (error.response?.status) {
+      return `HTTP ${error.response.status}`
+    }
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return 'unknown error'
+}
+
+type AxiosLikeError = {
+  response?: {
+    status?: number
+    data?: { detail?: unknown }
+  }
+}
+
+function isAxiosLikeError(error: unknown): error is AxiosLikeError {
+  return typeof error === 'object' && error !== null && 'response' in error
 }
 
 function activeStrategies(config: GlobalConfigType, fallback: string[]) {
