@@ -109,6 +109,25 @@ class GlobalConfigPatch(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class LatencyMetricsResponse(BaseModel):
+    """Avg/p95 seconds per bot operation, sourced from Prometheus
+    bot_operation_duration_seconds. None when Prometheus has no data yet
+    (cold start) or is unreachable."""
+
+    bet_scan_avg: float | None = None
+    bet_scan_p95: float | None = None
+    fetch_markets_avg: float | None = None
+    fetch_markets_p95: float | None = None
+    predict_batch_avg: float | None = None
+    predict_batch_p95: float | None = None
+    place_bet_avg: float | None = None
+    place_bet_p95: float | None = None
+    housekeeping_avg: float | None = None
+    housekeeping_p95: float | None = None
+    runtime_config_poll_avg: float | None = None
+    runtime_config_poll_p95: float | None = None
+
+
 class LogMessage(BaseModel):
     timestamp: datetime
     level: str

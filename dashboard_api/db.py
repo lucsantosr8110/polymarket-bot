@@ -3,6 +3,7 @@ import sys
 from collections.abc import AsyncIterator
 
 import asyncpg
+import httpx
 from dotenv import load_dotenv
 from fastapi import Request
 
@@ -26,3 +27,15 @@ async def close_pool(pool: asyncpg.Pool | None) -> None:
 
 async def get_pool(request: Request) -> AsyncIterator[asyncpg.Pool | None]:
     yield request.app.state.pool
+
+
+def create_http_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=5.0)
+
+
+async def close_http_client(client: httpx.AsyncClient) -> None:
+    await client.aclose()
+
+
+async def get_http_client(request: Request) -> AsyncIterator[httpx.AsyncClient]:
+    yield request.app.state.http_client

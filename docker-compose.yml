@@ -88,6 +88,7 @@ services:
       DATABASE_URL: postgres://bot:bot@postgres:5432/polymarket
       CONFIG_POLL_INTERVAL_SECS: "60"
       BOT_LOG_FILE: /app/logs/bot.log
+      PROMETHEUS_URL: http://prometheus:9090
     volumes:
       - ./logs:/app/logs:ro
     ports:
