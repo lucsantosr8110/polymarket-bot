@@ -277,19 +277,54 @@ cp .env.example .env
 ### Docker Compose (recommended)
 
 ```bash
+docker compose up -d        # add --build to rebuild local images (dashboard-*, model-server)
+```
+
+Starts 8 services:
+
+| Service | Port | Description |
+|---|---|---|
+| **postgres** | 5432 | PostgreSQL 17 — shared data persistence |
+| **model-server** | — | Python FastAPI sidecar — ensemble predictions + scheduled retraining |
+| **bot** | 9000 | Trading bot — pre-built image from GHCR, Prometheus metrics on 9000 |
+| **copy-trading-bot** | 9001 | Copy trading bot — pre-built image from GHCR, metrics on 9001 |
+| **dashboard-api** | 8001 | FastAPI backend for the dashboard (built locally) |
+| **dashboard-ui** | 5173 | React dashboard served by nginx (built locally) |
+| **prometheus** | 9090 | Metrics collection (scrapes both bots) |
+| **grafana** | 3000 | Dashboards |
+
+### Access points
+
+| URL | What |
+|---|---|
+| http://localhost:5173 | **Dashboard** — KPIs, bets, strategies, live config, logs |
+| http://localhost:8001/api/health | Dashboard API health probe |
+| http://localhost:3000 | **Grafana** (default `admin` / `admin` — change in prod) |
+| http://localhost:9090 | Prometheus |
+
+The dashboard UI is served by nginx, which reverse-proxies `/api/*` (REST + the
+logs WebSocket) to `dashboard-api`, so the SPA stays same-origin — no CORS and
+the API need not be exposed publicly. Editing a strategy or global field in the
+dashboard writes to the `runtime_config` table; the bot picks it up on its next
+polling cycle (`CONFIG_POLL_INTERVAL_SECS`, default 60s) — watch for a
+`Runtime config reloaded from database` log line.
+
+### Production deploy
+
+Deploy is automated by `.github/workflows/release.yml` (version bump → build &
+push bot images to GHCR → `deploy.yml` over SSH to the Hetzner host). The deploy
+step rsyncs `docker-compose.yml`, `scripts/`, `migrations/`, `monitoring/`,
+`dashboard_api/`, and `dashboard-ui/`, then on the server runs:
+
+```bash
+docker compose build model-server dashboard-api dashboard-ui
 docker compose up -d
 ```
 
-Starts 6 services:
-
-| Service | Description |
-|---|---|
-| **postgres** | PostgreSQL 17 — shared data persistence |
-| **model-server** | Python FastAPI sidecar — ensemble predictions + scheduled retraining |
-| **bot** | Trading bot — pre-built image from GHCR |
-| **copy-trading-bot** | Copy trading bot — pre-built image from GHCR |
-| **prometheus** | Metrics collection (scrapes both bots) |
-| **grafana** | Dashboards (port 3000) |
+Secrets never live in the repo: the server `.env` is written from the
+`DEPLOY_ENV` GitHub secret, and `.env` is git-ignored. For production also
+override the Grafana admin credentials (`GF_SECURITY_ADMIN_PASSWORD`) and the
+Postgres password via the server environment.
 
 ### Local Development
 
