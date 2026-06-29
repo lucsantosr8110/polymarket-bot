@@ -76,13 +76,17 @@ export type Strategy = {
 
 export type StrategyPatch = Partial<Omit<Strategy, 'name'>>
 
+// Shared across TS/Pydantic/Rust. "custom" is injected by the dashboard when a
+// risk field is edited away from a preset.
+export type RiskProfile = 'conservative' | 'balanced' | 'aggressive' | 'custom'
+
 export type GlobalConfig = {
   scan_interval_mins?: number
   bet_scan_interval_mins?: number
   heartbeat_interval_mins?: number
   config_poll_interval_secs?: number
   active_strategies?: string[]
-  risk_profile?: string
+  risk_profile?: RiskProfile
   model_sidecar_url?: string
   news_enabled?: boolean
   min_volume?: number
