@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Duration;
 
 pub struct TelegramNotifier {
     client: Client,
@@ -13,7 +14,17 @@ pub struct TelegramNotifier {
 impl TelegramNotifier {
     pub fn new(bot_token: &str, chat_id: &str) -> Self {
         Self {
-            client: Client::new(),
+            // Client::new() has no timeout — a stalled connection to the
+            // Telegram API would hang send()/poll_commands() forever with no
+            // error logged. bet_scan_cycle and housekeeping_cycle both call
+            // notifier.send() mid-cycle, so that hang silently froze the
+            // whole bet-scan/housekeeping loop (observed: both loops stopped
+            // logging for 8+ hours with no error/panic, while the WS and
+            // command-poll loops — different clients — kept running).
+            client: Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("failed to build Telegram HTTP client"),
             bot_token: bot_token.to_string(),
             chat_id: chat_id.to_string(),
             last_update_id: AtomicI64::new(0),
