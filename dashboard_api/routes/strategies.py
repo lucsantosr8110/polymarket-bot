@@ -13,7 +13,9 @@ router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 @router.get("")
 async def get_strategies(pool: Annotated[asyncpg.Pool | None, Depends(get_pool)]) -> list[dict[str, Any]]:
     strategies = await get_runtime_config(pool, "strategies")
-    return list(strategies)
+    if not isinstance(strategies, list):
+        raise HTTPException(status_code=500, detail="strategies data corrupted: expected list")
+    return strategies
 
 
 @router.put("/{name}")
@@ -22,7 +24,9 @@ async def update_strategy(
     patch: StrategyPatch,
     pool: Annotated[asyncpg.Pool | None, Depends(get_pool)],
 ) -> dict[str, Any]:
-    strategies = list(await get_runtime_config(pool, "strategies"))
+    strategies = await get_runtime_config(pool, "strategies")
+    if not isinstance(strategies, list):
+        raise HTTPException(status_code=500, detail="strategies data corrupted: expected list")
     patch_data = patch.model_dump(exclude_none=True)
     try:
         updated = merge_strategy(strategies, name, patch_data)
