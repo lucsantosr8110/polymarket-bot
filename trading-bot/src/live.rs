@@ -271,7 +271,14 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
                 .config_poll_interval_secs
                 .max(1);
             tokio::time::sleep(Duration::from_secs(poll_secs)).await;
-            match reload_runtime_config(&rc_pool, &rc_cfg, &rc_store).await {
+            let rc_start = std::time::Instant::now();
+            let result = reload_runtime_config(&rc_pool, &rc_cfg, &rc_store).await;
+            metrics::record_operation_duration(
+                "runtime_config_poll",
+                "db_query",
+                rc_start.elapsed().as_secs_f64(),
+            );
+            match result {
                 Ok(changed) => metrics::record_runtime_config_status(true, changed),
                 Err(e) => {
                     metrics::record_runtime_config_status(false, false);
@@ -330,6 +337,11 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
             }
 
             metrics::record_duration("bot_housekeeping_duration_seconds", hk_start.elapsed());
+            metrics::record_operation_duration(
+                "housekeeping",
+                "full_cycle",
+                hk_start.elapsed().as_secs_f64(),
+            );
             tokio::time::sleep(Duration::from_secs(runtime.global.scan_interval_mins * 60)).await;
         }
     });
@@ -361,6 +373,11 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
                 tracing::error!(err = %e, "Bet scan cycle failed");
             }
             metrics::record_duration("bot_scan_duration_seconds", scan_start.elapsed());
+            metrics::record_operation_duration(
+                "bet_scan",
+                "full_cycle",
+                scan_start.elapsed().as_secs_f64(),
+            );
             tokio::time::sleep(Duration::from_secs(
                 runtime.global.bet_scan_interval_mins * 60,
             ))

@@ -359,7 +359,14 @@ pub async fn bet_scan_cycle(
                     )
                     .await;
 
-                match portfolio.place_bet(&new_bet).await {
+                let pb_start = std::time::Instant::now();
+                let place_result = portfolio.place_bet(&new_bet).await;
+                metrics::record_operation_duration(
+                    "place_bet",
+                    "db_write",
+                    pb_start.elapsed().as_secs_f64(),
+                );
+                match place_result {
                     Ok(_bet_id) => {
                         let new_strat_bankroll = portfolio.strategy_bankroll(&strat.name).await?;
                         let open_count = portfolio.open_bets().await?.len();

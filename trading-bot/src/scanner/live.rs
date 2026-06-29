@@ -897,7 +897,13 @@ impl LiveScanner {
         seen_headlines: &mut std::collections::HashSet<String>,
     ) -> Result<ScanResult> {
         // Step 1: Fetch all active markets
+        let fm_start = std::time::Instant::now();
         let markets = self.fetch_active_markets().await?;
+        crate::metrics::record_operation_duration(
+            "fetch_markets",
+            "api_call",
+            fm_start.elapsed().as_secs_f64(),
+        );
         let total = markets.len();
         tracing::info!(total, "Fetched active markets");
 
@@ -1051,7 +1057,13 @@ impl LiveScanner {
             .iter()
             .map(|(_, price, _, features)| (features.clone(), *price))
             .collect();
+        let pb_start = std::time::Instant::now();
         let predictions = self.predict_batch(&batch_items).await;
+        crate::metrics::record_operation_duration(
+            "predict_batch",
+            "sidecar",
+            pb_start.elapsed().as_secs_f64(),
+        );
 
         let mut scored: Vec<ModelCandidate> = Vec::new();
         for ((market, current_price, history, features), pred) in
