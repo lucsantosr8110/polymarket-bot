@@ -1,6 +1,9 @@
 target/
 !target/x86_64-unknown-linux-musl/release/trading-bot
 !target/x86_64-unknown-linux-musl/release/copy-trading-bot
+# Local (non-CI) glibc builds used by */Dockerfile.local
+!target/release/trading-bot
+!target/release/copy-trading-bot
 .env
 portfolio_state.json
 .git/

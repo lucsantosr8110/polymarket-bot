@@ -52,9 +52,11 @@ services:
       MODEL_SIDECAR_URL: http://model-server:8000
       METRICS_PORT: "9000"
       BOT_LOG_FILE: /app/logs/bot.log
+    # Tee stdout to a file so the dashboard logs tab (WebSocket) can tail it.
+    entrypoint: ["/bin/sh", "-c", "/bin/trading-bot 2>&1 | tee /app/logs/bot.log"]
     volumes:
       - model:/app/model
-      - botlogs:/app/logs
+      - ./logs:/app/logs
     ports:
       - "9000:9000"
     stop_grace_period: 15s
@@ -87,7 +89,7 @@ services:
       CONFIG_POLL_INTERVAL_SECS: "60"
       BOT_LOG_FILE: /app/logs/bot.log
     volumes:
-      - botlogs:/app/logs:ro
+      - ./logs:/app/logs:ro
     ports:
       - "8001:8001"
     restart: unless-stopped
@@ -142,6 +144,5 @@ services:
 volumes:
   pgdata:
   model:
-  botlogs:
   prometheus_data:
   grafana_data:
