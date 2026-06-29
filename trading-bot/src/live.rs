@@ -10,9 +10,9 @@ use tokio::sync::{RwLock, mpsc};
 use crate::config::AppConfig;
 use crate::cycles;
 use crate::metrics;
+use crate::runtime_config::{RuntimeConfigSnapshot, reload_runtime_config};
 use crate::scanner::ws::{ActivityAlert, MarketWatcher};
 use crate::storage::postgres::PgPortfolio;
-use crate::strategy::StrategyProfile;
 use crate::telegram::notifier::TelegramNotifier;
 
 /// Curated victory GIFs sent on winning bets.
@@ -94,6 +94,13 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
     portfolio.run_migrations().await?;
     tracing::info!("Database connected and migrations applied");
 
+    let runtime_config = Arc::new(RwLock::new(RuntimeConfigSnapshot::from_app_config(&cfg)));
+    match reload_runtime_config(&pool, &cfg, &runtime_config).await {
+        Ok(true) => tracing::info!("Initial runtime config loaded from database"),
+        Ok(false) => tracing::info!("Runtime config initialized from AppConfig defaults"),
+        Err(e) => tracing::warn!(err = %e, "Runtime config unavailable; using AppConfig defaults"),
+    }
+
     // Backfill URLs for any bets that were placed before the url column existed
     if let Err(e) = portfolio.backfill_urls().await {
         tracing::warn!(err = %e, "URL backfill failed (non-fatal)");
@@ -104,23 +111,31 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
         &cfg.telegram_chat_id,
     ));
     let scanner = Arc::new(
-        crate::scanner::live::LiveScanner::new(&cfg, pool)
+        crate::scanner::live::LiveScanner::new(&cfg, pool.clone())
             .await
             .expect("failed to init scanner"),
     );
 
-    let strategies = Arc::new(StrategyProfile::from_config(&cfg));
-    let strategy_names: Vec<String> = strategies.iter().map(|s| s.name.clone()).collect();
+    let initial_snapshot = runtime_config.read().await.clone();
+    let strategy_names: Vec<String> = initial_snapshot
+        .strategies
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
     portfolio
         .init_strategy_bankrolls(&strategy_names, cfg.strategy_bankroll)
         .await?;
-    let strat_names: Vec<&str> = strategies.iter().map(|s| s.name.as_str()).collect();
+    let strat_names: Vec<&str> = initial_snapshot
+        .strategies
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
     tracing::info!(strategies = ?strat_names, "Strategies loaded");
 
     let open_bets = portfolio.open_bets().await?;
     let resolved = portfolio.resolved_bets().await?;
     let starting = portfolio.starting_bankroll().await?;
-    let num_strategies = strategies.len() as f64;
+    let num_strategies = initial_snapshot.strategies.len() as f64;
     let starting_per_strat = if num_strategies > 0.0 {
         starting / num_strategies
     } else {
@@ -129,7 +144,7 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
 
     let mut strat_lines = Vec::new();
     let mut total_bankroll = 0.0_f64;
-    for strat in strategies.iter() {
+    for strat in &initial_snapshot.strategies {
         let s_bankroll = portfolio.strategy_bankroll(&strat.name).await?;
         let s_open = open_bets
             .iter()
@@ -210,7 +225,8 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
                 "disabled".to_string()
             },
             hk_min = cfg.scan_interval_mins,
-            max_sig = strategies
+            max_sig = initial_snapshot
+                .strategies
                 .iter()
                 .map(|s| s.max_signals_per_day)
                 .max()
@@ -242,13 +258,34 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
         signals_found: AtomicU64::new(0),
     });
 
+    // Spawn runtime config polling loop. Missing table / transient DB errors are non-fatal.
+    let rc_pool = pool.clone();
+    let rc_cfg = Arc::clone(&cfg);
+    let rc_store = Arc::clone(&runtime_config);
+    tokio::spawn(async move {
+        loop {
+            let poll_secs = rc_store
+                .read()
+                .await
+                .global
+                .config_poll_interval_secs
+                .max(1);
+            tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+            match reload_runtime_config(&rc_pool, &rc_cfg, &rc_store).await {
+                Ok(changed) => metrics::record_runtime_config_status(true, changed),
+                Err(e) => {
+                    metrics::record_runtime_config_status(false, false);
+                    tracing::warn!(err = %e, "Failed to reload runtime config");
+                }
+            }
+        }
+    });
+
     // Spawn housekeeping loop (resolution checks, daily reports)
     let hk_portfolio = Arc::clone(&portfolio);
     let hk_notifier = Arc::clone(&notifier);
     let hk_scanner = Arc::clone(&scanner);
-    let hk_interval = cfg.scan_interval_mins;
-    let hk_stop_loss = cfg.stop_loss_pct;
-    let hk_exit_days = cfg.exit_days_before_expiry;
+    let hk_runtime_config = Arc::clone(&runtime_config);
     let hk_fee_defaults = cfg.category_fee_defaults();
     // Alert if model age exceeds retrain interval + 60 min buffer for the retrain itself
     let hk_retrain_max_secs = (cfg.retrain_interval_hours * 3600 + 60 * 60) as f64;
@@ -257,13 +294,14 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
         let mut overdue_alerted = false;
 
         loop {
+            let runtime = hk_runtime_config.read().await.clone();
             let hk_start = std::time::Instant::now();
             if let Err(e) = cycles::housekeeping_cycle(
                 &hk_portfolio,
                 &hk_notifier,
                 &hk_scanner,
-                hk_stop_loss,
-                hk_exit_days,
+                runtime.global.stop_loss_pct,
+                runtime.global.exit_days_before_expiry,
                 &hk_fee_defaults,
             )
             .await
@@ -292,7 +330,7 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
             }
 
             metrics::record_duration("bot_housekeeping_duration_seconds", hk_start.elapsed());
-            tokio::time::sleep(Duration::from_secs(hk_interval * 60)).await;
+            tokio::time::sleep(Duration::from_secs(runtime.global.scan_interval_mins * 60)).await;
         }
     });
 
@@ -300,22 +338,22 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
     let bs_portfolio = Arc::clone(&portfolio);
     let bs_notifier = Arc::clone(&notifier);
     let bs_scanner = Arc::clone(&scanner);
-    let bs_cfg = Arc::clone(&cfg);
     let bs_stats = Arc::clone(&stats);
-    let bs_strategies = Arc::clone(&strategies);
+    let bs_runtime_config = Arc::clone(&runtime_config);
     let bet_scan = tokio::spawn(async move {
         let mut seen_headlines: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
         loop {
+            let runtime = bs_runtime_config.read().await.clone();
             let scan_start = std::time::Instant::now();
             if let Err(e) = cycles::bet_scan_cycle(
                 &bs_portfolio,
                 &bs_notifier,
                 &bs_scanner,
-                &bs_cfg,
+                &runtime.global,
                 &bs_stats,
-                &bs_strategies,
+                &runtime.strategies,
                 &mut seen_headlines,
             )
             .await
@@ -323,7 +361,10 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
                 tracing::error!(err = %e, "Bet scan cycle failed");
             }
             metrics::record_duration("bot_scan_duration_seconds", scan_start.elapsed());
-            tokio::time::sleep(Duration::from_secs(bs_cfg.bet_scan_interval_mins * 60)).await;
+            tokio::time::sleep(Duration::from_secs(
+                runtime.global.bet_scan_interval_mins * 60,
+            ))
+            .await;
         }
     });
 
@@ -377,26 +418,27 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
     });
 
     // Spawn heartbeat loop
-    let hb_interval = cfg.heartbeat_interval_mins;
     let hb_portfolio = Arc::clone(&portfolio);
     let hb_notifier = Arc::clone(&notifier);
-    let hb_cfg = Arc::clone(&cfg);
     let hb_stats = Arc::clone(&stats);
-    let hb_strategies = Arc::clone(&strategies);
+    let hb_runtime_config = Arc::clone(&runtime_config);
     let heartbeat = tokio::spawn(async move {
-        if hb_interval == 0 {
-            // Disabled — park forever
-            std::future::pending::<()>().await;
-            return;
-        }
         loop {
-            tokio::time::sleep(Duration::from_secs(hb_interval * 60)).await;
+            let runtime = hb_runtime_config.read().await.clone();
+            if runtime.global.heartbeat_interval_mins == 0 {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                continue;
+            }
+            tokio::time::sleep(Duration::from_secs(
+                runtime.global.heartbeat_interval_mins * 60,
+            ))
+            .await;
             if let Err(e) = cycles::heartbeat_cycle(
                 &hb_portfolio,
                 &hb_notifier,
-                &hb_cfg,
+                runtime.global.heartbeat_interval_mins,
                 &hb_stats,
-                &hb_strategies,
+                &runtime.strategies,
             )
             .await
             {
@@ -469,8 +511,7 @@ pub async fn run_live(cfg: Arc<AppConfig>) -> Result<()> {
         Arc::clone(&scanner),
         Arc::clone(&portfolio),
         Arc::clone(&notifier),
-        Arc::clone(&strategies),
-        Arc::clone(&cfg),
+        Arc::clone(&runtime_config),
         Arc::clone(&token_map),
     ));
 

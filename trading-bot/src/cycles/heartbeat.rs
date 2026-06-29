@@ -1,7 +1,6 @@
 use anyhow::Result;
 use std::sync::atomic::Ordering;
 
-use crate::config::AppConfig;
 use crate::live::{ScanStats, notify_owner};
 use crate::metrics;
 use crate::storage::postgres::PgPortfolio;
@@ -11,7 +10,7 @@ use crate::telegram::notifier::TelegramNotifier;
 pub async fn heartbeat_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
-    cfg: &AppConfig,
+    heartbeat_interval_mins: u64,
     stats: &ScanStats,
     strategies: &[StrategyProfile],
 ) -> Result<()> {
@@ -30,7 +29,7 @@ pub async fn heartbeat_cycle(
          ⏱ {scans} scans | 🔍 {markets} markets\n\
          📰 {news_total} news ({news_new} new) | 🎯 {signals} signals\n\
          💰 `€{bankroll:.2}` | Today: {today}/{max}",
-        interval = cfg.heartbeat_interval_mins,
+        interval = heartbeat_interval_mins,
         today = signals_today,
         max = strategies
             .iter()

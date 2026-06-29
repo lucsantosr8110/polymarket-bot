@@ -137,6 +137,17 @@ pub fn record_model_status(age_secs: Option<f64>) {
     }
 }
 
+/// Record runtime_config polling health.
+pub fn record_runtime_config_status(ok: bool, changed: bool) {
+    gauge!("bot_runtime_config_stale").set(if ok { 0.0 } else { 1.0 });
+    if ok {
+        counter!("bot_runtime_config_reload_checks_total").increment(1);
+    }
+    if changed {
+        counter!("bot_runtime_config_reloads_total").increment(1);
+    }
+}
+
 /// Record a duration histogram for the given metric name.
 pub fn record_duration(name: &'static str, duration: std::time::Duration) {
     histogram!(name).record(duration.as_secs_f64());

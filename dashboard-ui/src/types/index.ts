@@ -80,6 +80,9 @@ export type GlobalConfig = {
   scan_interval_mins?: number
   bet_scan_interval_mins?: number
   heartbeat_interval_mins?: number
+  config_poll_interval_secs?: number
+  active_strategies?: string[]
+  risk_profile?: string
   model_sidecar_url?: string
   news_enabled?: boolean
   min_volume?: number

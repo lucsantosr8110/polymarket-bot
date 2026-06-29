@@ -112,6 +112,10 @@ pub struct AppConfig {
     #[config(env = "HEARTBEAT_INTERVAL_MINS", default = 60)]
     pub heartbeat_interval_mins: u64,
 
+    /// Poll interval for dashboard-driven runtime_config reloads.
+    #[config(env = "CONFIG_POLL_INTERVAL_SECS", default = 60)]
+    pub config_poll_interval_secs: u64,
+
     /// Expected model retrain interval in hours (matches RETRAIN_MAX_AGE_HOURS).
     #[config(env = "RETRAIN_INTERVAL_HOURS", default = 24)]
     pub retrain_interval_hours: u64,
@@ -345,6 +349,7 @@ impl AppConfig {
             llm_model: "gpt-4o".into(),
             llm_models_csv: String::new(),
             heartbeat_interval_mins: 60,
+            config_poll_interval_secs: 60,
             retrain_interval_hours: 24,
             consensus_agents: 2,
             calibration_min_samples: 20,

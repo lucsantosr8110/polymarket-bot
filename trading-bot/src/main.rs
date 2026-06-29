@@ -21,6 +21,7 @@ mod cycles;
 mod live;
 // model is local so that sidecar and xgb modules are accessible via crate::model
 mod model;
+mod runtime_config;
 mod scanner;
 mod strategy;
 

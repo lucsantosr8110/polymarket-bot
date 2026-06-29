@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::config::AppConfig;
 use crate::format;
 use crate::live::{ScanStats, broadcast, notify_owner};
 use crate::metrics;
+use crate::runtime_config::RuntimeGlobals;
 use crate::scanner::live::{LiveScanner, Signal};
 use crate::storage::portfolio::{BetSide, NewBet};
 use crate::storage::postgres::PgPortfolio;
@@ -78,7 +78,7 @@ pub async fn bet_scan_cycle(
     portfolio: &PgPortfolio,
     notifier: &TelegramNotifier,
     scanner: &LiveScanner,
-    cfg: &AppConfig,
+    runtime: &RuntimeGlobals,
     stats: &ScanStats,
     strategies: &[StrategyProfile],
     seen_headlines: &mut HashSet<String>,
@@ -181,13 +181,34 @@ pub async fn bet_scan_cycle(
                         }
                     };
 
+                    if accepted.kelly_size < runtime.min_kelly_size {
+                        tracing::info!(
+                            strategy = %strat.name,
+                            market = %signal.question,
+                            kelly = format_args!("{:.3}", accepted.kelly_size),
+                            min_kelly = format_args!("{:.3}", runtime.min_kelly_size),
+                            "Strategy rejected signal (runtime kelly gate)"
+                        );
+                        continue;
+                    }
+                    if signal.current_price < runtime.min_bet_price {
+                        tracing::info!(
+                            strategy = %strat.name,
+                            market = %signal.question,
+                            price = format_args!("{:.0}c", signal.current_price * 100.0),
+                            min_price = format_args!("{:.0}c", runtime.min_bet_price * 100.0),
+                            "Strategy rejected signal (runtime price gate)"
+                        );
+                        continue;
+                    }
+
                     let strat_bankroll = portfolio.strategy_bankroll(&strat.name).await?;
                     let sizing = match size_bet(
                         strat_bankroll,
                         accepted.kelly_size,
                         strat.min_bet,
                         signal.current_price,
-                        cfg.slippage_pct,
+                        runtime.slippage_pct,
                         signal.fee_rate,
                     ) {
                         Ok(sizing) => sizing,
@@ -492,12 +513,8 @@ mod tests {
     #[test]
     fn test_size_bet_guaranteed_edge_accepted() {
         let sizing = size_bet(
-            /* strat_bankroll */ 300.0,
-            /* kelly_size */ 0.10,
-            /* min_bet */ 5.0,
-            /* current_price */ 0.50,
-            /* slippage_pct */ 0.01,
-            /* fee_pct */ 0.02,
+            /* strat_bankroll */ 300.0, /* kelly_size */ 0.10, /* min_bet */ 5.0,
+            /* current_price */ 0.50, /* slippage_pct */ 0.01, /* fee_pct */ 0.02,
         )
         .expect("comfortable edge should clear min-bet and bankroll guards");
 

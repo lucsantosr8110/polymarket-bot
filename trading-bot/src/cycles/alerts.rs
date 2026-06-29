@@ -4,15 +4,14 @@ use std::time::Duration;
 
 use tokio::sync::{RwLock, mpsc};
 
-use crate::config::AppConfig;
 use crate::format;
 use crate::live::broadcast;
 use crate::metrics;
+use crate::runtime_config::RuntimeConfigSnapshot;
 use crate::scanner::live::LiveScanner;
 use crate::scanner::ws::ActivityAlert;
 use crate::storage::portfolio::{BetSide, NewBet};
 use crate::storage::postgres::PgPortfolio;
-use crate::strategy::StrategyProfile;
 use crate::telegram::notifier::TelegramNotifier;
 
 pub async fn alert_loop(
@@ -20,31 +19,31 @@ pub async fn alert_loop(
     scanner: Arc<LiveScanner>,
     portfolio: Arc<PgPortfolio>,
     notifier: Arc<TelegramNotifier>,
-    strategies: Arc<Vec<StrategyProfile>>,
-    cfg: Arc<AppConfig>,
+    runtime_config: Arc<RwLock<RuntimeConfigSnapshot>>,
     token_map: Arc<RwLock<HashMap<String, String>>>,
 ) {
-    // Throttle: don't re-assess same market within `alert_throttle_mins`
-    let alert_throttle = Duration::from_secs(cfg.alert_throttle_mins * 60);
     let mut last_assessed: HashMap<String, std::time::Instant> = HashMap::new();
-    // Global WS cooldown: max 1 WS-triggered bet per `ws_bet_cooldown_secs`
-    let ws_bet_cooldown = Duration::from_secs(cfg.ws_bet_cooldown_secs);
-    let mut last_ws_bet = std::time::Instant::now() - ws_bet_cooldown;
+    let mut last_ws_bet = std::time::Instant::now() - Duration::from_secs(600);
     // Max WS bets per day
     let mut ws_bets_today: usize = 0;
     let mut ws_bets_date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     // Cooldown for open-bet price move notifications (per market)
-    let price_alert_cooldown = Duration::from_secs(cfg.price_alert_cooldown_secs);
     let mut last_price_alert: HashMap<String, std::time::Instant> = HashMap::new();
 
     while let Some(alert) = alert_rx.recv().await {
+        let snapshot = runtime_config.read().await.clone();
+        let strategies = snapshot.strategies;
+        let globals = snapshot.global;
+        let alert_throttle = Duration::from_secs(globals.alert_throttle_mins * 60);
+        let ws_bet_cooldown = Duration::from_secs(globals.ws_bet_cooldown_secs);
+        let price_alert_cooldown = Duration::from_secs(globals.price_alert_cooldown_secs);
         // Reset daily counter
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         if today != ws_bets_date {
             ws_bets_today = 0;
             ws_bets_date = today;
         }
-        if ws_bets_today >= cfg.max_ws_bets_per_day {
+        if ws_bets_today >= globals.max_ws_bets_per_day {
             continue;
         }
 
@@ -173,7 +172,7 @@ pub async fn alert_loop(
                 }
 
                 // Process through strategies — only first matching strategy bets
-                for strat in strategies.iter() {
+                for strat in &strategies {
                     let sent = portfolio
                         .strategy_signals_today(&strat.name)
                         .await
@@ -187,6 +186,13 @@ pub async fn alert_loop(
                         None => continue,
                     };
 
+                    if accepted.kelly_size < globals.min_kelly_size {
+                        continue;
+                    }
+                    if signal.current_price < globals.min_bet_price {
+                        continue;
+                    }
+
                     let strat_bankroll = portfolio
                         .strategy_bankroll(&strat.name)
                         .await
@@ -196,7 +202,8 @@ pub async fn alert_loop(
                         continue;
                     }
 
-                    let slipped_price = (signal.current_price * (1.0 + cfg.slippage_pct)).min(0.99);
+                    let slipped_price =
+                        (signal.current_price * (1.0 + globals.slippage_pct)).min(0.99);
                     let shares = raw_bet / slipped_price;
                     let fee = raw_bet * signal.fee_rate;
                     let total_cost = raw_bet + fee;

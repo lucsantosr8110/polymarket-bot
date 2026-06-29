@@ -122,6 +122,34 @@ do not belong here — they pollute schema history and re-run on every fresh
 DB. Applied migrations are immutable (sqlx checksums them): never edit or
 delete a migration that has run anywhere.
 
+### Runtime dashboard config
+
+The dashboard writes live settings to PostgreSQL table `runtime_config`.
+`trading-bot` polls that table with `CONFIG_POLL_INTERVAL_SECS` (default `60`)
+and swaps an in-memory snapshot without restart.
+
+Runtime-applied fields currently include:
+`strategies`, `active_strategies`, `scan_interval_mins`,
+`bet_scan_interval_mins`, `heartbeat_interval_mins`,
+`config_poll_interval_secs`, `stop_loss_pct`,
+`exit_days_before_expiry`, `slippage_pct`, `min_kelly_size`,
+`min_bet_price`, `max_ws_bets_per_day`, `alert_throttle_mins`,
+`ws_bet_cooldown_secs`, and
+`price_alert_cooldown_secs`.
+
+Fields not listed above remain startup-only until wired into the Rust runtime.
+`take_profit_pct` is stored for dashboard planning but is not yet enforced by
+the bot. Strategy Kelly sizing is runtime-editable per strategy; the global
+`kelly_fraction` field is kept for dashboard compatibility only.
+
+Validate a live reload with:
+
+```bash
+DATABASE_URL=postgres://bot:bot@localhost:5432/polymarket \
+DASHBOARD_API_URL=http://localhost:8001 \
+scripts/test_runtime_config.sh Balanced 0.30
+```
+
 ## How It Works
 
 ### Trading Bot — ML Pipeline

@@ -62,6 +62,15 @@ export default function App() {
     }
   }
 
+  const toggleStrategyActive = async (strategy: Strategy) => {
+    const currentConfig = globalConfig.data ?? {}
+    const allStrategyNames = (strategies.data ?? []).map((item) => item.name.toLowerCase())
+    const currentActive = activeStrategies(currentConfig, allStrategyNames)
+    const key = strategy.name.toLowerCase()
+    const nextActive = currentActive.includes(key) ? currentActive.filter((name) => name !== key) : [...currentActive, key]
+    await saveGlobalConfig({ ...currentConfig, active_strategies: nextActive })
+  }
+
   return (
     <div className="min-h-screen bg-scan-grid bg-[length:42px_42px] p-3 md:p-4">
       <div className="mx-auto flex max-w-[1800px] flex-col gap-4 lg:flex-row">
@@ -84,10 +93,27 @@ export default function App() {
 
           {active === 'strategies' ? (
             <div className="grid gap-4">
+              <div className="cyber-card p-4">
+                <h3 className="font-orbitron text-lg text-cyber-text">Strategy Selector</h3>
+                <p className="mt-1 text-sm text-cyber-muted">Enabled strategies are used by the Rust bot after next runtime-config polling cycle.</p>
+              </div>
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {(strategies.data ?? []).map((strategy) => (
-                  <StrategyCard key={strategy.name} strategy={strategy} onEdit={setEditingStrategy} />
-                ))}
+                {(strategies.data ?? []).map((strategy) => {
+                  const enabled = activeStrategies(
+                    globalConfig.data ?? {},
+                    (strategies.data ?? []).map((item) => item.name.toLowerCase())
+                  ).includes(strategy.name.toLowerCase())
+
+                  return (
+                    <StrategyCard
+                      key={strategy.name}
+                      strategy={strategy}
+                      active={enabled}
+                      onEdit={setEditingStrategy}
+                      onToggleActive={toggleStrategyActive}
+                    />
+                  )
+                })}
               </div>
               {strategies.data?.length === 0 ? <EmptyState label="No strategies loaded" /> : null}
             </div>
@@ -183,4 +209,12 @@ function StatusLine({ errors }: { errors: Array<string | null> }) {
 
 function EmptyState({ label }: { label: string }) {
   return <div className="cyber-card p-8 text-center text-sm text-cyber-muted">{label}</div>
+}
+
+function activeStrategies(config: GlobalConfigType, fallback: string[]) {
+  const configured = config.active_strategies
+  if (Array.isArray(configured) && configured.length > 0) {
+    return configured.map((name) => String(name).toLowerCase())
+  }
+  return fallback
 }
