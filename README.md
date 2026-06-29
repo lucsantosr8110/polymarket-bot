@@ -128,6 +128,14 @@ The dashboard writes live settings to PostgreSQL table `runtime_config`.
 `trading-bot` polls that table with `CONFIG_POLL_INTERVAL_SECS` (default `60`)
 and swaps an in-memory snapshot without restart.
 
+`CONFIG_POLL_INTERVAL_SECS` (env) only takes effect on a fresh database
+before `runtime_config.global` has a seeded row — migration `022` seeds
+`config_poll_interval_secs` explicitly, and the DB value always wins over
+the env var once that row exists (`RuntimeGlobals::overlay`). To change
+poll cadence on a running deployment, edit it via the dashboard
+(Config Global → `config_poll_interval_secs`) or update the DB row
+directly, not the env var.
+
 Runtime-applied fields currently include:
 `strategies`, `active_strategies`, `scan_interval_mins`,
 `bet_scan_interval_mins`, `heartbeat_interval_mins`,
