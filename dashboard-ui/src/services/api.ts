@@ -1,7 +1,11 @@
 import axios from 'axios'
 import type { BetHistory, GlobalConfig, Health, OpenBet, Overview, Signal, Strategy, StrategyPatch } from '../types'
 
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8001'
+// Default to same-origin so the nginx reverse proxy (prod) and the Vite dev
+// proxy both serve /api without CORS. Override with VITE_API_URL to point at a
+// separately-hosted API.
+export const API_BASE =
+  import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8001')
 
 export const api = axios.create({
   baseURL: API_BASE,
