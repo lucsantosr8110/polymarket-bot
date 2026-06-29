@@ -7,12 +7,10 @@
 //! Run: cargo test --manifest-path common/Cargo.toml -- --include-ignored
 //! #[ignore] por padrão — sem DB externo o teste é skipped, não falha.
 //!
-//! T1 documents a real gap: place_bet has no funds-sufficiency check. The
-//! UPDATE unconditionally subtracts cost+fee and the guard at postgres.rs:885
-//! only checks that both portfolio rows were matched (rows_affected == 2),
-//! not the resulting sign — so an under-funded bet still succeeds and the
-//! bankroll goes negative. This test pins that current behavior; it is not
-//! a statement that it's desirable.
+//! T1/T1b cover the funds-sufficiency guard in place_bet: the UPDATE only
+//! matches the bankroll row when value_f64 >= cost+fee, so the existing
+//! rows_affected == 2 check at postgres.rs:885 rejects (rolls back) any
+//! bet that would take the bankroll negative.
 
 use chrono::Utc;
 use polymarket_common::storage::portfolio::{BetSide, NewBet};
@@ -120,7 +118,7 @@ fn make_bet(strategy: &str, market_id: &str, cost: f64, fee: f64, shares: f64) -
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires live Postgres (DATABASE_URL)"]
-async fn t1_insufficient_bankroll_is_not_rejected_today() {
+async fn t1_insufficient_bankroll_is_rejected() {
     let (_guard, portfolio, pool, strategy, market_id) = setup("t1").await;
     let bankroll_key = format!("bankroll:{strategy}");
 
@@ -136,11 +134,10 @@ async fn t1_insufficient_bankroll_is_not_rejected_today() {
     let fee = 0.2_f64;
     let bet = make_bet(&strategy, &market_id, cost, fee, 20.0);
 
-    // Documented current behavior: succeeds, no funds check exists.
     let result = portfolio.place_bet(&bet).await;
     assert!(
-        result.is_ok(),
-        "place_bet has no funds-sufficiency guard today; expected Ok, got {result:?}"
+        result.is_err(),
+        "place_bet must reject when bankroll < cost+fee, got {result:?}"
     );
 
     let bet_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM bets WHERE market_id = $1")
@@ -148,19 +145,48 @@ async fn t1_insufficient_bankroll_is_not_rejected_today() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(bet_count.0, 1, "bet is persisted despite insufficient funds");
+    assert_eq!(bet_count.0, 0, "rejected bet must not be persisted");
 
     let bankroll_after: (f64,) = sqlx::query_as("SELECT value_f64 FROM portfolio WHERE key = $1")
         .bind(&bankroll_key)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let expected = seeded_bankroll - (cost + fee);
     assert_eq!(
-        bankroll_after.0, expected,
-        "bankroll goes negative: {seeded_bankroll} - (cost+fee) = {expected}"
+        bankroll_after.0, seeded_bankroll,
+        "bankroll must be untouched by a rejected bet"
     );
-    assert!(bankroll_after.0 < 0.0, "bankroll must be negative in this gap scenario");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires live Postgres (DATABASE_URL)"]
+async fn t1b_exact_balance_bet_is_accepted() {
+    let (_guard, portfolio, pool, strategy, market_id) = setup("t1b").await;
+    let bankroll_key = format!("bankroll:{strategy}");
+
+    let cost = 10.0_f64;
+    let fee = 0.2_f64;
+    let seeded_bankroll = cost + fee;
+    sqlx::query("INSERT INTO portfolio (key, value_f64) VALUES ($1, $2)")
+        .bind(&bankroll_key)
+        .bind(seeded_bankroll)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let bet = make_bet(&strategy, &market_id, cost, fee, 20.0);
+    let result = portfolio.place_bet(&bet).await;
+    assert!(
+        result.is_ok(),
+        "place_bet must accept a bet that exactly exhausts the bankroll, got {result:?}"
+    );
+
+    let bankroll_after: (f64,) = sqlx::query_as("SELECT value_f64 FROM portfolio WHERE key = $1")
+        .bind(&bankroll_key)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(bankroll_after.0, 0.0, "bankroll must land exactly at zero");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

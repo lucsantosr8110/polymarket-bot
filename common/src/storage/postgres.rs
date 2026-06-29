@@ -873,7 +873,7 @@ impl PgPortfolio {
                WHEN key = $3 THEN value_f64 + 1
                ELSE value_f64
              END
-             WHERE key IN ($1, $3)",
+             WHERE (key = $1 AND value_f64 >= $2) OR key = $3",
         )
         .bind(&bankroll_key)
         .bind(total_deduction)
@@ -881,10 +881,12 @@ impl PgPortfolio {
         .execute(&mut *tx)
         .await?;
 
-        // Strict guard: exactly 2 rows must be affected (bankroll + signals)
+        // Strict guard: exactly 2 rows must be affected (bankroll row only
+        // matches when funds are sufficient, signals row always matches)
         if r.rows_affected() != 2 {
             return Err(anyhow!(
-                "portfolio update affected {} rows, expected 2 for strategy '{}'",
+                "portfolio update affected {} rows, expected 2 for strategy '{}' \
+                 (insufficient bankroll or missing keys)",
                 r.rows_affected(),
                 bet.strategy
             ));
