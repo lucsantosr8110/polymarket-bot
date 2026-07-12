@@ -33,7 +33,7 @@ pub async fn run_live(cfg: Arc<CopyTradingConfig>) -> Result<()> {
                 Ok(p) => break p,
                 Err(e) => {
                     attempts += 1;
-                    if attempts >= 10 {
+                    if attempts >= 40 {
                         return Err(e.into());
                     }
                     tracing::warn!(attempt = attempts, err = %e, "DB connect failed, retrying...");
