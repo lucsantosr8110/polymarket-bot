@@ -445,6 +445,14 @@ impl CopyTraderMonitor {
                 let age_secs = (now - trade.timestamp).num_seconds();
                 if age_secs > self.stale_trade_secs {
                     stale_count += 1;
+                    let _ = portfolio.mark_copy_trade_skipped(
+                        &trader.proxy_wallet,
+                        &trade.condition_id,
+                        &trade.condition_id,
+                        &trade.side,
+                        trade.price,
+                        &format!("stale trade (age {}s > {}s threshold)", age_secs, self.stale_trade_secs),
+                    ).await;
                     continue;
                 }
 
@@ -460,6 +468,14 @@ impl CopyTraderMonitor {
 
                 if already_seen {
                     skipped_count += 1;
+                    let _ = portfolio.mark_copy_trade_skipped(
+                        &trader.proxy_wallet,
+                        &trade.condition_id,
+                        &trade.condition_id,
+                        &trade.side,
+                        trade.price,
+                        "already seen (duplicate)",
+                    ).await;
                     continue;
                 }
 

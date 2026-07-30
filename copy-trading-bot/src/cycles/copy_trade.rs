@@ -76,6 +76,11 @@ pub async fn copy_trade_cycle(
                 Ok(m) => m.market_id,
                 Err(e) => {
                     tracing::warn!(slug = %trade.slug, err = %e, "Copy-exit: failed to resolve market slug");
+                    let _ = portfolio.mark_copy_trade_skipped(
+                        &dt.trader_wallet, &trade.condition_id, &trade.condition_id,
+                        &trade.side, trade.price,
+                        "failed to resolve market slug",
+                    ).await;
                     continue;
                 }
             };
@@ -98,6 +103,11 @@ pub async fn copy_trade_cycle(
                         trader = wallet_short,
                         "Copy-exit: could not fetch current price, skipping"
                     );
+                    let _ = portfolio.mark_copy_trade_skipped(
+                        &dt.trader_wallet, &trade.condition_id, &trade.condition_id,
+                        &trade.side, trade.price,
+                        "could not fetch current price for exit",
+                    ).await;
                     continue;
                 };
 
@@ -154,6 +164,18 @@ pub async fn copy_trade_cycle(
                             pnl = format_args!("€{:+.2}", r.pnl),
                             "Copy-exit executed"
                         );
+
+                        // Mark the copy-trade event as acted upon
+                        let _ = portfolio
+                            .mark_copy_trade_acted_on(
+                                &dt.trader_wallet,
+                                &trade.condition_id,
+                                &trade.condition_id,
+                                &trade.side,
+                                trade.price,
+                            )
+                            .await;
+
                         exits_triggered += 1;
                     }
                     Ok(None) => {}
@@ -186,6 +208,11 @@ pub async fn copy_trade_cycle(
         // Skip if we already have an open bet on this market (use Gamma numeric ID)
         if skip_ids.contains(&market.market_id) {
             tracing::info!(market = %market.market_id, trader = wallet_short, "Copy-trade skip: already have open bet");
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "already have open bet on this market",
+            ).await;
             continue;
         }
 
@@ -198,6 +225,11 @@ pub async fn copy_trade_cycle(
                 trader = wallet_short,
                 "Copy-trade skip: same event already bet on"
             );
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "same event already has an open bet",
+            ).await;
             continue;
         }
 
@@ -220,6 +252,11 @@ pub async fn copy_trade_cycle(
                     drift = drift,
                     "Copy-trade skip: price drifted too far"
                 );
+                let _ = portfolio.mark_copy_trade_skipped(
+                    &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                    &trade.side, trade.price,
+                    &format!("price drifted too far (drift={drift:.4})"),
+                ).await;
                 continue;
             }
         }
@@ -238,6 +275,11 @@ pub async fn copy_trade_cycle(
                 bankroll = trader_bankroll,
                 "Copy-trade skip: insufficient trader bankroll"
             );
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "insufficient trader bankroll",
+            ).await;
             continue;
         }
 
@@ -254,6 +296,11 @@ pub async fn copy_trade_cycle(
                 estimated_prob,
                 "Copy-trade skip: kelly <= 0"
             );
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "kelly <= 0 (negative or zero)",
+            ).await;
             continue;
         }
 
@@ -264,6 +311,11 @@ pub async fn copy_trade_cycle(
                 kelly_bet = raw_bet,
                 "Copy-trade skip: kelly bet below minimum"
             );
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "kelly bet below minimum",
+            ).await;
             continue;
         }
 
@@ -281,6 +333,11 @@ pub async fn copy_trade_cycle(
                 bankroll = trader_bankroll,
                 "Copy-trade skip: cost exceeds bankroll"
             );
+            let _ = portfolio.mark_copy_trade_skipped(
+                &dt.trader_wallet, &market.market_id, &trade.condition_id,
+                &trade.side, trade.price,
+                "cost exceeds trader bankroll",
+            ).await;
             continue;
         }
 
@@ -359,6 +416,17 @@ pub async fn copy_trade_cycle(
                 metrics::record_bet(&strategy_name, SignalSource::CopyTrade.as_str(), bet_amount);
                 metrics::record_bankroll(&strategy_name, new_bankroll);
                 metrics::record_open_bets(open_count as u64);
+
+                // Mark the copy-trade event as acted upon
+                let _ = portfolio
+                    .mark_copy_trade_acted_on(
+                        &dt.trader_wallet,
+                        &market.market_id,
+                        &trade.condition_id,
+                        &trade.side,
+                        trade.price,
+                    )
+                    .await;
 
                 // Get trader's record with us
                 let trader_record = portfolio.copy_trader_record(&strategy_name).await?;

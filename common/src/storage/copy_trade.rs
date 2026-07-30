@@ -139,6 +139,60 @@ impl PgPortfolio {
         Ok(row.is_some())
     }
 
+    /// Mark a copy-trade event as acted upon (bet placed or exit executed).
+    pub async fn mark_copy_trade_acted_on(
+        &self,
+        trader_wallet: &str,
+        market_id: &str,
+        condition_id: &str,
+        side: &str,
+        price: f64,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE copy_trade_events \
+             SET acted_on = TRUE \
+             WHERE trader_wallet = $1 AND market_id = $2 \
+               AND condition_id = $3 AND side = $4 AND price = $5",
+        )
+        .bind(trader_wallet)
+        .bind(market_id)
+        .bind(condition_id)
+        .bind(side)
+        .bind(price)
+        .execute(&self.pool)
+        .await
+        .context("mark_copy_trade_acted_on")?;
+        Ok(())
+    }
+
+    /// Record why a copy-trade event was skipped (stale, duplicate, etc.).
+    pub async fn mark_copy_trade_skipped(
+        &self,
+        trader_wallet: &str,
+        market_id: &str,
+        condition_id: &str,
+        side: &str,
+        price: f64,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE copy_trade_events \
+             SET acted_on = TRUE, skip_reason = $1 \
+             WHERE trader_wallet = $2 AND market_id = $3 \
+               AND condition_id = $4 AND side = $5 AND price = $6",
+        )
+        .bind(reason)
+        .bind(trader_wallet)
+        .bind(market_id)
+        .bind(condition_id)
+        .bind(side)
+        .bind(price)
+        .execute(&self.pool)
+        .await
+        .context("mark_copy_trade_skipped")?;
+        Ok(())
+    }
+
     /// Look up a single followed trader by wallet address.
     pub async fn get_trader_by_wallet(&self, wallet: &str) -> Result<Option<FollowedTrader>> {
         let row: Option<FollowedTraderRow> = sqlx::query_as(
